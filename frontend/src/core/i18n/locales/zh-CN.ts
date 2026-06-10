@@ -443,8 +443,8 @@ export const zhCN: Translations = {
       createSkill: "新建技能",
       emptyTitle: "还没有技能",
       emptyDescription:
-        "将你的 Agent Skill 文件夹放在 DeerFlow 根目录下的 `/skills/custom` 文件夹中。",
-      emptyButton: "创建你的第一个技能",
+        "请在管理端进行技能的提交审核，审核通过后即可在此启用使用。",
+      emptyButton: "新建第一个技能",
     },
     notification: {
       title: "通知",

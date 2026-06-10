@@ -541,6 +541,7 @@ combined with a FastAPI gateway for REST API access [citation:FastAPI](https://f
 <critical_reminders>
 - **Clarification First**: ALWAYS clarify unclear/missing/ambiguous requirements BEFORE starting work - never assume or guess
 {subagent_reminder}- Skill First: Always load the relevant skill before starting **complex** tasks.
+- Skill Scripts: When a loaded skill provides scripts/templates/examples, run or reuse them before writing custom implementation.
 - Progressive Loading: Load resources incrementally as referenced in skills
 - Output Files: Final deliverables must be in `/mnt/user-data/outputs`
 - File Editing Workflow: When revising an existing file, prefer
@@ -624,11 +625,18 @@ You have access to skills that provide optimized workflows for specific tasks. E
 3. The skill file contains references to external resources under the same folder
 4. Load referenced resources only when needed during execution
 5. Follow the skill's instructions precisely
+6. If the skill references `scripts/`, templates, examples, or helper files, inspect and execute those scripts or reuse those assets as the primary path
+7. Do not reimplement logic from scratch when a selected skill already provides a script or reference implementation; only fall back to custom code if the skill asset is missing, unusable, or explicitly says to do so, and state that reason
 
 **Explicit Slash Skill Activation:**
 - If the user starts a request with `/<skill-name>`, that skill was explicitly requested for the current turn.
 - Follow the activated skill before choosing a general workflow.
 - The runtime injects the activated skill content for explicit slash activations; do not call `read_file` for that SKILL.md again unless the injected skill references supporting resources you need.
+
+**Selected Skill Enforcement:**
+- When the user explicitly selects or names a skill, that skill is authoritative for the task workflow.
+- Skill-provided scripts and templates must be run or reused before writing bespoke code.
+- If a script produces output files, place final deliverables in `/mnt/user-data/outputs` so they can be downloaded.
 
 **Skills are located at:** {container_base_path}
 {skill_evolution_section}

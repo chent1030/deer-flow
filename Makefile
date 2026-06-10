@@ -1,9 +1,11 @@
 # DeerFlow - Unified Development Environment
 
-.PHONY: help config config-upgrade check install setup doctor detect-thread-boundaries detect-blocking-io dev dev-daemon start start-daemon stop up down clean docker-init docker-start docker-stop docker-logs docker-logs-frontend docker-logs-gateway
+.PHONY: help config config-upgrade check install setup doctor detect-thread-boundaries detect-blocking-io dev dev-daemon start start-daemon stop up down clean docker-init docker-start docker-stop docker-logs docker-logs-frontend docker-logs-gateway admin-install admin-dev admin-build db-migrate db-seed infra-up infra-down
 
 BASH ?= bash
 BACKEND_UV_RUN = cd backend && uv run
+UV_DEFAULT_INDEX ?= https://pypi.tuna.tsinghua.edu.cn/simple
+NPM_REGISTRY ?= https://registry.npmmirror.com
 
 # Detect OS for Windows compatibility
 ifeq ($(OS),Windows_NT)
@@ -72,9 +74,11 @@ check:
 # Install all dependencies
 install:
 	@echo "Installing backend dependencies..."
-	@cd backend && uv sync
+	@cd backend && uv sync --default-index "$(UV_DEFAULT_INDEX)"
 	@echo "Installing frontend dependencies..."
-	@cd frontend && pnpm install
+	@cd frontend && pnpm install --registry "$(NPM_REGISTRY)"
+	@echo "Installing admin panel dependencies..."
+	@cd admin && pnpm install --registry "$(NPM_REGISTRY)"
 	@echo "Installing pre-commit hooks..."
 	@$(BACKEND_UV_RUN) --with pre-commit pre-commit install
 	@echo "✓ All dependencies installed"
@@ -159,3 +163,38 @@ up:
 # Stop and remove production containers
 down:
 	@$(RUN_WITH_GIT_BASH) ./scripts/deploy.sh down
+
+# ==========================================
+# Admin Panel Commands
+# ==========================================
+
+admin-install:
+	@cd admin && pnpm install --registry "$(NPM_REGISTRY)"
+
+admin-dev:
+	@cd admin && pnpm dev
+
+admin-build:
+	@cd admin && pnpm build
+
+# ==========================================
+# Database Commands
+# ==========================================
+
+db-migrate:
+	@cd backend && PYTHONPATH=. uv run alembic upgrade head
+
+db-seed:
+	@cd backend && PYTHONPATH=. uv run python scripts/seed_admin.py
+
+# ==========================================
+# Infrastructure Commands (PostgreSQL + MinIO)
+# ==========================================
+
+infra-up:
+	@cd docker && docker compose -f docker-compose.infra.yaml up -d
+	@echo "✓ PostgreSQL (5432) and MinIO (9000/9001) started"
+
+infra-down:
+	@cd docker && docker compose -f docker-compose.infra.yaml down
+	@echo "✓ PostgreSQL and MinIO stopped"

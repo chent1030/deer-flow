@@ -28,6 +28,7 @@ from langchain_core.runnables import RunnableConfig
 
 from deerflow.agents.lead_agent.prompt import apply_prompt_template
 from deerflow.agents.memory.summarization_hook import memory_flush_hook
+from deerflow.agents.middlewares.auto_present_outputs_middleware import AutoPresentOutputsMiddleware
 from deerflow.agents.middlewares.clarification_middleware import ClarificationMiddleware
 from deerflow.agents.middlewares.loop_detection_middleware import LoopDetectionMiddleware
 from deerflow.agents.middlewares.memory_middleware import MemoryMiddleware
@@ -373,6 +374,7 @@ def build_middlewares(
         middlewares.append(SafetyFinishReasonMiddleware.from_config(safety_config))
 
     # ClarificationMiddleware should always be last
+    middlewares.append(AutoPresentOutputsMiddleware())
     middlewares.append(ClarificationMiddleware())
     return middlewares
 

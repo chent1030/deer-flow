@@ -5,7 +5,15 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from app.admin.config import AdminConfig
+from app.admin.minio import MinioClient
+from app.admin.routers import audit_threads as admin_audit_threads
+from app.admin.routers import auth as admin_auth
+from app.admin.routers import departments as admin_depts
+from app.admin.routers import skills as admin_skills
+from app.admin.routers import users as admin_users
 from app.gateway.auth_middleware import AuthMiddleware
 from app.gateway.config import get_gateway_config
 from app.gateway.csrf_middleware import CSRFMiddleware, get_configured_cors_origins
@@ -21,6 +29,7 @@ from app.gateway.routers import (
     memory,
     models,
     runs,
+    scheduler,
     skills,
     suggestions,
     thread_runs,
@@ -179,6 +188,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     config = get_gateway_config()
     logger.info(f"Starting API Gateway on {config.host}:{config.port}")
 
+    admin_config: AdminConfig = startup_config.admin
+    admin_engine = create_async_engine(admin_config.database_url)
+    app.state.admin_session_factory = async_sessionmaker(admin_engine, expire_on_commit=False)
+    app.state.minio_client = MinioClient(admin_config.minio)
+    logger.info("Admin module initialised (DB + MinIO)")
+
     # Pre-warm tiktoken encoding cache so the first memory-injection request
     # never blocks on the BPE data download (which hits an OpenAI/Azure URL
     # that may be unreachable in restricted networks — see issue #3402).
@@ -215,7 +230,35 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         except Exception:
             logger.exception("No IM channels configured or channel service failed to start")
 
+        # Initialize scheduler
+        import os
+        try:
+            from app.admin.services.scheduler_service import load_all_enabled_tasks
+            from deerflow.scheduler.executor import TaskExecutor
+            from deerflow.scheduler.manager import SchedulerManager
+
+            langgraph_url = f"http://{startup_config.gateway.host}:{startup_config.gateway.port}"
+            executor = TaskExecutor(app.state.admin_session_factory, langgraph_url=langgraph_url)
+            scheduler_manager = SchedulerManager.get_instance()
+            app.state.scheduler_manager = scheduler_manager
+            app.state.scheduler_executor = executor
+            async with app.state.admin_session_factory() as db:
+                await load_all_enabled_tasks(db, scheduler_manager, executor)
+            await scheduler_manager.start()
+            logger.info("Scheduler initialized")
+        except Exception:
+            logger.exception("Failed to initialize scheduler (non-fatal)")
+
         yield
+
+        # Stop scheduler
+        try:
+            from deerflow.scheduler.manager import SchedulerManager
+            scheduler_manager = SchedulerManager.get_instance()
+            await scheduler_manager.stop()
+            logger.info("Scheduler stopped")
+        except Exception:
+            logger.exception("Failed to stop scheduler")
 
         # Stop channel service on shutdown (bounded to prevent worker hang)
         try:
@@ -233,6 +276,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         except Exception:
             logger.exception("Failed to stop channel service")
 
+    await admin_engine.dispose()
     logger.info("Shutting down API Gateway")
 
 
@@ -390,6 +434,16 @@ This gateway provides runtime endpoints for agent runs plus custom endpoints for
 
     # Thread Runs API (LangGraph Platform-compatible runs lifecycle)
     app.include_router(thread_runs.router)
+
+    # Admin API routes
+    app.include_router(admin_auth.router)
+    app.include_router(admin_users.router)
+    app.include_router(admin_depts.router)
+    app.include_router(admin_skills.router)
+    app.include_router(admin_audit_threads.router)
+
+    # Scheduler API
+    app.include_router(scheduler.router)
 
     # Stateless Runs API (stream/wait without a pre-existing thread)
     app.include_router(runs.router)
