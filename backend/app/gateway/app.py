@@ -212,15 +212,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             from deerflow.scheduler.executor import TaskExecutor
             from deerflow.scheduler.manager import SchedulerManager
 
-            langgraph_url = f"http://{config.host}:{config.port}"
+            sched_mgr = SchedulerManager.get_instance()
+            langgraph_url = os.environ.get("DEER_FLOW_SCHEDULER_LANGGRAPH_URL", f"http://{config.host}:{config.port}")
             executor = TaskExecutor(app.state.admin_session_factory, langgraph_url=langgraph_url)
-            scheduler_manager = SchedulerManager.get_instance()
-            app.state.scheduler_manager = scheduler_manager
-            app.state.scheduler_executor = executor
+            sched_mgr.set_executor(executor)
+            sched_mgr.start()
+            app.state.scheduler_manager = sched_mgr
+
             async with app.state.admin_session_factory() as db:
-                await load_all_enabled_tasks(db, scheduler_manager, executor)
-            await scheduler_manager.start()
-            logger.info("Scheduler initialized")
+                enabled_tasks = await load_all_enabled_tasks(db)
+            for t in enabled_tasks:
+                sched_mgr.register_task(str(t.id), t.cron_expression)
+            logger.info("Scheduler loaded %d enabled tasks", len(enabled_tasks))
         except Exception:
             logger.exception("Failed to initialize scheduler (non-fatal)")
 
@@ -229,9 +232,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         # Stop scheduler
         try:
             from deerflow.scheduler.manager import SchedulerManager
-            scheduler_manager = SchedulerManager.get_instance()
-            await scheduler_manager.stop()
-            logger.info("Scheduler stopped")
+            sched_mgr = SchedulerManager.get_instance()
+            if sched_mgr is not None:
+                sched_mgr.stop()
+                logger.info("Scheduler stopped")
         except Exception:
             logger.exception("Failed to stop scheduler")
 
