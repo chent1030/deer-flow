@@ -58,67 +58,40 @@ _SHUTDOWN_HOOK_TIMEOUT_SECONDS = 5.0
 
 
 async def _ensure_admin_user(app: FastAPI) -> None:
-    """Startup hook: handle first boot and migrate orphan threads otherwise.
+    """Startup hook: check admin bootstrap and migrate orphan threads.
 
-    After admin creation, migrate orphan threads from the LangGraph
-    store (metadata.user_id unset) to the admin account. This is the
-    "no-auth → with-auth" upgrade path: users who ran DeerFlow without
-    authentication have existing LangGraph thread data that needs an
-    owner assigned.
-        First boot (no admin exists):
-            - Does NOT create any user accounts automatically.
-            - The operator must visit ``/setup`` to create the first admin.
-
-    Subsequent boots (admin already exists):
-      - Runs the one-time "no-auth → with-auth" orphan thread migration for
-        existing LangGraph thread metadata that has no user_id.
-
-    No SQL persistence migration is needed: the four user_id columns
-    (threads_meta, runs, run_events, feedback) only come into existence
-    alongside the auth module via create_all, so freshly created tables
-    never contain NULL-owner rows.
+    Uses the clerk admin user table (app.admin.models.user.User) which
+    manages users via the admin panel. The deer-flow built-in auth user
+    table (deerflow.persistence.user.model.UserRow) is not used when
+    the admin module is active.
     """
     from sqlalchemy import select
 
-    from app.gateway.deps import get_local_provider
+    from app.admin.models.user import User, UserRole
     from deerflow.persistence.engine import get_session_factory
-    from deerflow.persistence.user.model import UserRow
-
-    try:
-        provider = get_local_provider()
-    except RuntimeError:
-        # Auth persistence may not be initialized in some test/boot paths.
-        # Skip admin migration work rather than failing gateway startup.
-        logger.warning("Auth persistence not ready; skipping admin bootstrap check")
-        return
 
     sf = get_session_factory()
     if sf is None:
         return
 
-    admin_count = await provider.count_admin_users()
-
-    if admin_count == 0:
-        logger.info("=" * 60)
-        logger.info("  First boot detected — no admin account exists.")
-        logger.info("  Visit /setup to complete admin account creation.")
-        logger.info("=" * 60)
+    try:
+        async with sf() as session:
+            stmt = select(User).where(User.role == UserRole.SUPER_ADMIN).limit(1)
+            row = (await session.execute(stmt)).scalar_one_or_none()
+    except Exception:
+        logger.warning("Admin user check failed (table may not exist yet); run `make db-migrate` to initialize", exc_info=True)
         return
 
-    # Admin already exists — run orphan thread migration for any
-    # LangGraph thread metadata that pre-dates the auth module.
-    async with sf() as session:
-        stmt = select(UserRow).where(UserRow.system_role == "admin").limit(1)
-        row = (await session.execute(stmt)).scalar_one_or_none()
-
     if row is None:
-        return  # Should not happen (admin_count > 0 above), but be safe.
+        logger.info("=" * 60)
+        logger.info("  First boot detected — no admin account exists.")
+        logger.info("  Run `make db-seed` to create the initial admin account.")
+        logger.info("=" * 60)
+        return
 
     admin_id = str(row.id)
 
     # LangGraph store orphan migration — non-fatal.
-    # This covers the "no-auth → with-auth" upgrade path for users
-    # whose existing LangGraph thread metadata has no user_id set.
     store = getattr(app.state, "store", None)
     if store is not None:
         try:
@@ -221,11 +194,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
         # Check admin bootstrap state and migrate orphan threads after admin exists.
         # Must run AFTER langgraph_runtime so app.state.store is available for thread migration
-        try:
-            await _ensure_admin_user(app)
-        except Exception:
-            logger.warning("Admin bootstrap skipped (admin module handles user management independently)",
-                          exc_info=True)
+        await _ensure_admin_user(app)
 
         # Start IM channel service if any channels are configured
         try:
