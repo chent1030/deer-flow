@@ -221,7 +221,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
         # Check admin bootstrap state and migrate orphan threads after admin exists.
         # Must run AFTER langgraph_runtime so app.state.store is available for thread migration
-        await _ensure_admin_user(app)
+        try:
+            await _ensure_admin_user(app)
+        except Exception:
+            logger.warning("Admin bootstrap skipped (admin module handles user management independently)",
+                          exc_info=True)
 
         # Start IM channel service if any channels are configured
         try:
