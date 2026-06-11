@@ -189,6 +189,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info(f"Starting API Gateway on {config.host}:{config.port}")
 
     admin_config: AdminConfig = startup_config.admin
+    if isinstance(admin_config, dict):
+        admin_config = AdminConfig(**admin_config)
     admin_engine = create_async_engine(admin_config.database_url)
     app.state.admin_session_factory = async_sessionmaker(admin_engine, expire_on_commit=False)
     app.state.minio_client = MinioClient(admin_config.minio)
@@ -237,7 +239,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             from deerflow.scheduler.executor import TaskExecutor
             from deerflow.scheduler.manager import SchedulerManager
 
-            langgraph_url = f"http://{startup_config.gateway.host}:{startup_config.gateway.port}"
+            langgraph_url = f"http://{config.host}:{config.port}"
             executor = TaskExecutor(app.state.admin_session_factory, langgraph_url=langgraph_url)
             scheduler_manager = SchedulerManager.get_instance()
             app.state.scheduler_manager = scheduler_manager
