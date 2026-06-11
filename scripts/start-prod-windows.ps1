@@ -179,7 +179,7 @@ Wait-Port 2024 "LangGraph" $StartupTimeoutSeconds $langgraphProcess $langgraphLo
 
 $gatewayLog = Join-Path $logsDir "gateway.log"
 $gatewayProcess = Start-DeerFlowProcess "gateway" (Join-Path $repoRoot "backend") $gatewayCmd $gatewayLog (Join-Path $logsDir "gateway.pid")
-Wait-Port 8400 "Gateway" $StartupTimeoutSeconds $gatewayProcess $gatewayLog
+Wait-Port 8001 "Gateway" $StartupTimeoutSeconds $gatewayProcess $gatewayLog
 
 $frontendLog = Join-Path $logsDir "frontend.log"
 $frontendProcess = Start-DeerFlowProcess "frontend" (Join-Path $repoRoot "frontend") $frontendCmd $frontendLog (Join-Path $logsDir "frontend.pid")
