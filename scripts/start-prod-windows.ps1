@@ -21,7 +21,7 @@ param(
   [string]$LangGraphLogLevel = $env:LANGGRAPH_LOG_LEVEL,
   [int]$LangGraphJobsPerWorker = 10,
   [Nullable[bool]]$LangGraphIsolatedLoops = $null,
-  [int]$StartupTimeoutSeconds = 120
+  [int]$StartupTimeoutSeconds = 300
 )
 
 $ErrorActionPreference = "Stop"
