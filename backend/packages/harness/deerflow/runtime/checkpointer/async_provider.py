@@ -48,7 +48,13 @@ def _prepare_database_sqlite_checkpointer_path(db_config) -> str:
 
 
 def _build_postgres_pool(conn_string: str):
-    """Build an AsyncConnectionPool with TCP keepalive and connection checking."""
+    """Build an AsyncConnectionPool with TCP keepalive and connection checking.
+    
+    Uses asyncpg on Windows where psycopg is incompatible with ProactorEventLoop.
+    """
+    import sys
+    if sys.platform == "win32":
+        return None  # asyncpg handles pool internally
     from psycopg.rows import dict_row
     from psycopg_pool import AsyncConnectionPool
 
@@ -68,7 +74,18 @@ def _build_postgres_pool(conn_string: str):
 
 
 def _ensure_postgres_imports():
-    """Import and return (AsyncPostgresSaver, AsyncConnectionPool), raising ImportError on failure."""
+    """Import and return (AsyncPostgresSaver, AsyncConnectionPool), raising ImportError on failure.
+    
+    On Windows, uses asyncpg-based AsyncPGSaver instead of psycopg-based AsyncPostgresSaver.
+    """
+    import sys
+    if sys.platform == "win32":
+        try:
+            from deerflow.runtime.checkpointer.asyncpg_saver import AsyncPGSaver
+        except ImportError as exc:
+            raise ImportError(POSTGRES_INSTALL) from exc
+        return AsyncPGSaver, None
+        
     try:
         from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
     except ImportError as exc:
@@ -114,10 +131,17 @@ async def _async_checkpointer(config) -> AsyncIterator[Checkpointer]:
 
         AsyncPostgresSaver, _ = _ensure_postgres_imports()
         pool = _build_postgres_pool(config.connection_string)
-        async with pool:
-            saver = AsyncPostgresSaver(conn=pool)
-            await saver.setup()
-            yield saver
+        if pool is None:
+            # Windows: use asyncpg-based AsyncPGSaver (built-in pool)
+            import sys
+            async with AsyncPostgresSaver.from_conn_string(config.connection_string) as saver:
+                await saver.setup()
+                yield saver
+        else:
+            async with pool:
+                saver = AsyncPostgresSaver(conn=pool)
+                await saver.setup()
+                yield saver
         return
 
     raise ValueError(f"Unknown checkpointer type: {config.type!r}")
@@ -155,10 +179,17 @@ async def _async_checkpointer_from_database(db_config) -> AsyncIterator[Checkpoi
 
         AsyncPostgresSaver, _ = _ensure_postgres_imports()
         pool = _build_postgres_pool(db_config.postgres_url)
-        async with pool:
-            saver = AsyncPostgresSaver(conn=pool)
-            await saver.setup()
-            yield saver
+        if pool is None:
+            # Windows: use asyncpg-based AsyncPGSaver (built-in pool)
+            import sys
+            async with AsyncPostgresSaver.from_conn_string(db_config.postgres_url) as saver:
+                await saver.setup()
+                yield saver
+        else:
+            async with pool:
+                saver = AsyncPostgresSaver(conn=pool)
+                await saver.setup()
+                yield saver
         return
 
     raise ValueError(f"Unknown database backend: {db_config.backend!r}")

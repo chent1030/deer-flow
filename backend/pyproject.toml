@@ -56,3 +56,6 @@ members = ["packages/harness"]
 
 [tool.uv.sources]
 deerflow-harness = { workspace = true }
+
+[[tool.uv.index]]
+url = "https://mirrors.aliyun.com/pypi/simple"
