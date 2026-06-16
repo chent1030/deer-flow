@@ -160,7 +160,7 @@ export function RecentChatList() {
         }
         toast.success(t.common.exportSuccess);
       } catch {
-        toast.error("Failed to export conversation");
+        toast.error("导出会话失败");
       }
     },
     [t],

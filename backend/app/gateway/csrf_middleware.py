@@ -47,6 +47,7 @@ def should_check_csrf(request: Request) -> bool:
 
 _AUTH_EXEMPT_PATHS: frozenset[str] = frozenset(
     {
+        "/api/admin/auth/login",
         "/api/v1/auth/login/local",
         "/api/v1/auth/logout",
         "/api/v1/auth/register",
@@ -183,7 +184,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         if should_check_csrf(request) and _is_auth and not is_allowed_auth_origin(request):
             return JSONResponse(
                 status_code=403,
-                content={"detail": "Cross-site auth request denied."},
+                content={"detail": "跨站认证请求已被拒绝。"},
             )
 
         if should_check_csrf(request) and not _is_auth:
@@ -193,13 +194,13 @@ class CSRFMiddleware(BaseHTTPMiddleware):
             if not cookie_token or not header_token:
                 return JSONResponse(
                     status_code=403,
-                    content={"detail": "CSRF token missing. Include X-CSRF-Token header."},
+                    content={"detail": "缺少 CSRF 令牌，请携带 X-CSRF-Token 请求头。"},
                 )
 
             if not secrets.compare_digest(cookie_token, header_token):
                 return JSONResponse(
                     status_code=403,
-                    content={"detail": "CSRF token mismatch."},
+                    content={"detail": "CSRF 令牌不匹配。"},
                 )
 
         response = await call_next(request)

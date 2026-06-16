@@ -59,6 +59,65 @@ function Ensure-FrontendEnv($RepoRoot) {
   }
 }
 
+function Get-LatestWriteTime($Paths) {
+  $latest = [DateTime]::MinValue
+  foreach ($path in $Paths) {
+    if (-not (Test-Path $path)) {
+      continue
+    }
+
+    $items = @(Get-Item -Path $path -Force)
+    if ($items[0].PSIsContainer) {
+      $items += Get-ChildItem -Path $path -Recurse -File -Force
+    }
+
+    foreach ($item in $items) {
+      if ($item.LastWriteTime -gt $latest) {
+        $latest = $item.LastWriteTime
+      }
+    }
+  }
+  return $latest
+}
+
+function Ensure-FrontendBuild($RepoRoot) {
+  $nextDir = Join-Path $RepoRoot "frontend\.next"
+  $buildIdPath = Join-Path $nextDir "BUILD_ID"
+  $requiredPaths = @(
+    $buildIdPath,
+    (Join-Path $nextDir "package.json"),
+    (Join-Path $nextDir "server"),
+    (Join-Path $nextDir "static")
+  )
+
+  foreach ($path in $requiredPaths) {
+    if (-not (Test-Path $path)) {
+      throw "Frontend production build is missing or incomplete. Run without -SkipFrontendBuild, or run 'cd frontend; pnpm build' before starting."
+    }
+  }
+
+  $sourceLatest = Get-LatestWriteTime @(
+    (Join-Path $RepoRoot "frontend\src"),
+    (Join-Path $RepoRoot "frontend\public"),
+    (Join-Path $RepoRoot "frontend\next.config.js"),
+    (Join-Path $RepoRoot "frontend\package.json"),
+    (Join-Path $RepoRoot "frontend\pnpm-lock.yaml"),
+    (Join-Path $RepoRoot "frontend\.env.production.local")
+  )
+  $buildTime = (Get-Item -Path $buildIdPath).LastWriteTime
+  if ($sourceLatest -gt $buildTime) {
+    throw "Frontend production build is stale. Run without -SkipFrontendBuild, or run 'cd frontend; pnpm build' before starting."
+  }
+}
+
+function Ensure-AdminBuild($RepoRoot) {
+  $distDir = Join-Path $RepoRoot "admin\dist"
+  $indexPath = Join-Path $distDir "index.html"
+  if (-not (Test-Path $indexPath)) {
+    throw "Admin production build is missing. Run without -SkipFrontendBuild, or run 'cd admin; pnpm build' before starting."
+  }
+}
+
 function Wait-Port($Port, $Name, $TimeoutSeconds, $Process, $LogPath) {
   $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
   while ((Get-Date) -lt $deadline) {
@@ -104,8 +163,12 @@ function Start-DeerFlowProcess($Name, $WorkingDirectory, $Command, $LogPath, $Pi
 $repoRoot = Get-RepoRoot
 Set-Location $repoRoot
 
+$env:UV_CACHE_DIR = Join-Path $repoRoot ".uv-cache"
+$env:NEXT_TELEMETRY_DISABLED = "1"
+
 $logsDir = Join-Path $repoRoot "logs"
 New-Item -ItemType Directory -Force -Path $logsDir | Out-Null
+New-Item -ItemType Directory -Force -Path $env:UV_CACHE_DIR | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $repoRoot "temp\client_body_temp") | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $repoRoot "temp\proxy_temp") | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $repoRoot "temp\fastcgi_temp") | Out-Null
@@ -154,6 +217,9 @@ if (-not $SkipFrontendBuild) {
     Pop-Location
   }
 }
+
+Ensure-FrontendBuild $repoRoot
+Ensure-AdminBuild $repoRoot
 
 $langgraphArgs = @(
   "uv run python start_langgraph.py --no-browser --no-reload",

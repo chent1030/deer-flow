@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.admin.auth.jwt import create_access_token, create_refresh_token, decode_token
 from app.admin.auth.password import hash_password, verify_password
-from app.admin.deps import get_current_user, get_db
+from app.admin.deps import _get_admin_config, get_current_user, get_db
 from app.admin.models.user import User, UserStatus
 from app.admin.schemas.auth import (
     ChangePasswordRequest,
@@ -16,7 +16,6 @@ from app.admin.schemas.auth import (
     TokenResponse,
     UserInfoResponse,
 )
-from deerflow.config import get_app_config
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/admin/auth", tags=["admin-auth"])
@@ -39,10 +38,10 @@ async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).where(User.username == req.username))
     user = result.scalar_one_or_none()
     if user is None or not verify_password(req.password, user.password_hash):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户名或密码错误")
     if user.status != UserStatus.ACTIVE:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User is disabled")
-    config = get_app_config().admin.jwt
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="用户已被禁用")
+    config = _get_admin_config().jwt
     access = create_access_token(user.id, user.username, user.role.value, user.department_id, user.tenant_id, config)
     refresh = create_refresh_token(user.id, config)
     return TokenResponse(access_token=access, refresh_token=refresh)
@@ -50,18 +49,18 @@ async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
 
 @router.post("/refresh", response_model=TokenResponse)
 async def refresh(req: RefreshRequest, db: AsyncSession = Depends(get_db)):
-    config = get_app_config().admin.jwt
+    config = _get_admin_config().jwt
     try:
         payload = decode_token(req.refresh_token, config.secret_key)
     except Exception:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="刷新令牌无效")
     if payload.get("type") != "refresh":
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token type")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="令牌类型无效")
     user_id = payload.get("sub")
     result = await db.execute(select(User).where(User.id == uuid.UUID(user_id)))
     user = result.scalar_one_or_none()
     if user is None or user.status != UserStatus.ACTIVE:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not available")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户不可用")
     access = create_access_token(user.id, user.username, user.role.value, user.department_id, user.tenant_id, config)
     refresh_token = create_refresh_token(user.id, config)
     return TokenResponse(access_token=access, refresh_token=refresh_token)
@@ -75,8 +74,8 @@ async def get_me(user: User = Depends(get_current_user)):
 @router.put("/me/password")
 async def change_password(req: ChangePasswordRequest, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     if not verify_password(req.old_password, user.password_hash):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Old password is incorrect")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="当前密码不正确")
     user.password_hash = hash_password(req.new_password)
     db.add(user)
     await db.flush()
-    return {"message": "Password changed successfully"}
+    return {"message": "密码修改成功"}

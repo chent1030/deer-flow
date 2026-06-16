@@ -18,6 +18,10 @@ def _make_app() -> FastAPI:
     async def register():
         return {"ok": True}
 
+    @app.post("/api/admin/auth/login")
+    async def admin_login():
+        return {"ok": True}
+
     @app.post("/api/threads/abc/runs/stream")
     async def protected_mutation():
         return {"ok": True}
@@ -41,7 +45,7 @@ def test_auth_post_rejects_cross_origin_browser_request():
     )
 
     assert response.status_code == 403
-    assert response.json()["detail"] == "Cross-site auth request denied."
+    assert response.json()["detail"] == "跨站认证请求已被拒绝。"
 
 
 def test_auth_post_allows_same_origin_browser_request():
@@ -56,6 +60,30 @@ def test_auth_post_allows_same_origin_browser_request():
     assert response.cookies.get("csrf_token")
 
 
+def test_admin_login_allows_same_origin_browser_request_without_existing_csrf_token():
+    client = TestClient(_make_app(), base_url="http://localhost:2026")
+
+    response = client.post(
+        "/api/admin/auth/login",
+        headers={"Origin": "http://localhost:2026"},
+    )
+
+    assert response.status_code == 200
+    assert response.cookies.get("csrf_token")
+
+
+def test_admin_login_rejects_cross_origin_browser_request():
+    client = TestClient(_make_app(), base_url="http://localhost:2026")
+
+    response = client.post(
+        "/api/admin/auth/login",
+        headers={"Origin": "https://evil.example"},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "跨站认证请求已被拒绝。"
+
+
 def test_auth_post_rejects_malformed_origin_with_path():
     client = TestClient(_make_app(), base_url="https://deerflow.example")
 
@@ -65,7 +93,7 @@ def test_auth_post_rejects_malformed_origin_with_path():
     )
 
     assert response.status_code == 403
-    assert response.json()["detail"] == "Cross-site auth request denied."
+    assert response.json()["detail"] == "跨站认证请求已被拒绝。"
     assert response.cookies.get("csrf_token") is None
 
 
@@ -78,7 +106,7 @@ def test_auth_post_rejects_malformed_origin_with_invalid_port():
     )
 
     assert response.status_code == 403
-    assert response.json()["detail"] == "Cross-site auth request denied."
+    assert response.json()["detail"] == "跨站认证请求已被拒绝。"
     assert response.cookies.get("csrf_token") is None
 
 
@@ -165,7 +193,7 @@ def test_auth_post_does_not_treat_wildcard_cors_as_allowed_origin(monkeypatch):
     )
 
     assert response.status_code == 403
-    assert response.json()["detail"] == "Cross-site auth request denied."
+    assert response.json()["detail"] == "跨站认证请求已被拒绝。"
 
 
 def test_auth_post_sets_strict_samesite_csrf_cookie():
@@ -201,7 +229,7 @@ def test_non_auth_mutation_still_requires_double_submit_token():
     )
 
     assert response.status_code == 403
-    assert response.json()["detail"] == "CSRF token missing. Include X-CSRF-Token header."
+    assert response.json()["detail"] == "缺少 CSRF 令牌，请携带 X-CSRF-Token 请求头。"
 
 
 def test_non_auth_mutation_allows_valid_double_submit_token():
@@ -232,4 +260,4 @@ def test_non_auth_mutation_rejects_mismatched_double_submit_token():
     )
 
     assert response.status_code == 403
-    assert response.json()["detail"] == "CSRF token mismatch."
+    assert response.json()["detail"] == "CSRF 令牌不匹配。"

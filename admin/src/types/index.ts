@@ -23,6 +23,13 @@ export enum SkillStatus {
   WITHDRAWN = "withdrawn",
 }
 
+export const AgentShareStatus = {
+  CREATED: "created",
+  FAILED: "failed",
+} as const;
+
+export type AgentShareStatus = (typeof AgentShareStatus)[keyof typeof AgentShareStatus];
+
 export interface User {
   id: string;
   username: string;
@@ -61,6 +68,21 @@ export interface Skill {
   department_name: string | null;
   visible_user_ids: string[];
   visible_department_ids: string[];
+}
+
+export interface AgentShareRecord {
+  id: string;
+  source_owner_id: string;
+  source_owner_username: string | null;
+  source_owner_display_name: string | null;
+  source_agent_name: string;
+  target_user_id: string;
+  target_username: string | null;
+  target_display_name: string | null;
+  target_agent_name: string | null;
+  status: AgentShareStatus;
+  error_message: string | null;
+  created_at: string | null;
 }
 
 export interface LoginRequest {

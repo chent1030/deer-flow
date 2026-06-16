@@ -36,6 +36,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { CronBuilder, cronToHuman } from "@/components/workspace/settings/cron-builder";
 import { SettingsSection } from "@/components/workspace/settings/settings-section";
 import { authFetch } from "@/core/api";
+import { localizeErrorMessage } from "@/core/errors/localize";
 import { useI18n } from "@/core/i18n/hooks";
 import {
   useScheduledTasks,
@@ -162,7 +163,7 @@ export function SchedulerSettingsPage() {
             <div className="text-muted-foreground text-sm">{t.common.loading}</div>
           )}
           {error && (
-            <div className="text-destructive text-sm">{error.message}</div>
+            <div className="text-destructive text-sm">{localizeErrorMessage(error.message)}</div>
           )}
           {tasks?.length === 0 && (
             <div className="text-muted-foreground text-sm">{t.scheduler.noTasks}</div>
@@ -491,7 +492,7 @@ function ExecutionHistoryList({ taskId, onViewExecution, t }: ExecutionHistoryLi
   if (error) {
     return (
       <div className="mt-3 border-t pt-3">
-        <div className="text-destructive text-sm">{error.message}</div>
+        <div className="text-destructive text-sm">{localizeErrorMessage(error.message)}</div>
       </div>
     );
   }
@@ -595,7 +596,7 @@ function ExecutionDetailDialogOpener({
             )}
           </div>
         ) : (
-          <div className="text-muted-foreground text-sm">Not found</div>
+          <div className="text-muted-foreground text-sm">未找到</div>
         )}
       </DialogContent>
     </Dialog>

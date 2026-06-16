@@ -189,6 +189,12 @@ export const enUS: Translations = {
     deleteConfirm:
       "Are you sure you want to delete this agent? This action cannot be undone.",
     deleteSuccess: "Agent deleted",
+    share: "Share",
+    shareTitle: "Share agent",
+    shareDescription:
+      "Sharing creates an independent copy for each recipient. Later edits do not sync.",
+    shareSearchPlaceholder: "Search users",
+    shareNoUsers: "No users available",
     newChat: "New chat",
     createPageTitle: "Design your Agent",
     createPageSubtitle:
@@ -347,6 +353,43 @@ export const enUS: Translations = {
     toggleSidebar: "Toggle Sidebar",
   },
 
+  // Scheduler
+  scheduler: {
+    title: "Scheduler",
+    description: "Create and manage recurring agent tasks.",
+    createTask: "Create task",
+    noTasks: "No scheduled tasks yet.",
+    taskName: "Task name",
+    taskNamePlaceholder: "Summarize weekly market updates",
+    prompt: "Prompt",
+    promptPlaceholder: "Describe what the agent should do when this task runs.",
+    skill: "Skill",
+    skillPlaceholder: "Select a skill",
+    cronExpression: "Schedule",
+    customVariables: "Custom variables",
+    variableKey: "Key",
+    variableValue: "Value",
+    addVariable: "Add variable",
+    save: "Save",
+    deleteConfirm: "Delete scheduled task?",
+    deleteConfirmDescription:
+      "This scheduled task and its future runs will be removed. This action cannot be undone.",
+    deleteTask: "Delete task",
+    lastExecution: "Last run",
+    nextExecution: "Next run",
+    toggleDisable: "Pause task",
+    toggleEnable: "Resume task",
+    triggerNow: "Run now",
+    editTask: "Edit task",
+    executionHistory: "Execution history",
+    noExecutions: "No executions yet.",
+    duration: "Duration",
+    viewDetail: "View detail",
+    executionDetail: "Execution detail",
+    status: "Status",
+    messages: "Messages",
+  },
+
   // Settings
   settings: {
     title: "Settings",
@@ -358,6 +401,7 @@ export const enUS: Translations = {
       tools: "Tools",
       skills: "Skills",
       notification: "Notification",
+      scheduler: "Scheduler",
       about: "About",
     },
     memory: {
@@ -481,7 +525,8 @@ export const enUS: Translations = {
     },
     account: {
       profileTitle: "Profile",
-      email: "Email",
+      username: "Username",
+      displayName: "Display name",
       role: "Role",
       changePasswordTitle: "Change Password",
       changePasswordDescription: "Update your account password.",

@@ -343,6 +343,12 @@ async def get_current_user_from_request(request: Request):
 
     payload = decode_token(access_token)
     if isinstance(payload, TokenError):
+        if payload != TokenError.EXPIRED:
+            try:
+                return await get_admin_session_user_from_request(request)
+            except HTTPException as admin_exc:
+                if admin_exc.status_code != 401:
+                    raise
         raise HTTPException(
             status_code=401,
             detail=AuthErrorResponse(code=token_error_to_code(payload), message=f"Token error: {payload.value}").model_dump(),
@@ -364,6 +370,89 @@ async def get_current_user_from_request(request: Request):
         )
 
     return user
+
+
+async def get_admin_session_user_from_request(request: Request):
+    """Resolve a migrated clerk/admin session cookie to a Gateway user.
+
+    The clerk migration uses the admin username/password user table as the
+    source of truth. Gateway APIs still need a lightweight auth user object so
+    request.state.user and the user contextvar can enforce per-user isolation.
+    """
+    import uuid
+
+    import jwt
+    from sqlalchemy import select
+
+    from app.admin.auth.jwt import decode_token as decode_admin_token
+    from app.admin.deps import _get_admin_config
+    from app.admin.models.user import User as AdminUser
+    from app.admin.models.user import UserRole, UserStatus
+    from app.gateway.auth.errors import AuthErrorCode, AuthErrorResponse
+    from app.gateway.auth.models import User as GatewayUser
+
+    access_token = request.cookies.get("access_token")
+    if not access_token:
+        raise HTTPException(
+            status_code=401,
+            detail=AuthErrorResponse(code=AuthErrorCode.NOT_AUTHENTICATED, message="Not authenticated").model_dump(),
+        )
+
+    config = _get_admin_config().jwt
+    try:
+        payload = decode_admin_token(access_token, config.secret_key)
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(
+            status_code=401,
+            detail=AuthErrorResponse(code=AuthErrorCode.TOKEN_EXPIRED, message="Token expired").model_dump(),
+        )
+    except jwt.InvalidTokenError:
+        raise HTTPException(
+            status_code=401,
+            detail=AuthErrorResponse(code=AuthErrorCode.TOKEN_INVALID, message="Token invalid").model_dump(),
+        )
+
+    if payload.get("type") != "access":
+        raise HTTPException(
+            status_code=401,
+            detail=AuthErrorResponse(code=AuthErrorCode.TOKEN_INVALID, message="Invalid token type").model_dump(),
+        )
+
+    try:
+        user_id = uuid.UUID(str(payload.get("sub")))
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status_code=401,
+            detail=AuthErrorResponse(code=AuthErrorCode.TOKEN_INVALID, message="Invalid token payload").model_dump(),
+        )
+
+    app = getattr(request, "app", None)
+    state = getattr(app, "state", None)
+    session_factory = getattr(state, "admin_session_factory", None)
+    if session_factory is None:
+        raise HTTPException(status_code=503, detail="Admin session factory not available")
+
+    async with session_factory() as session:
+        result = await session.execute(select(AdminUser).where(AdminUser.id == user_id))
+        admin_user = result.scalar_one_or_none()
+
+    if admin_user is None:
+        raise HTTPException(
+            status_code=401,
+            detail=AuthErrorResponse(code=AuthErrorCode.USER_NOT_FOUND, message="User not found").model_dump(),
+        )
+    if admin_user.status != UserStatus.ACTIVE:
+        raise HTTPException(status_code=403, detail="User is disabled")
+
+    system_role = "user" if admin_user.role == UserRole.USER else "admin"
+    email = admin_user.email or f"{admin_user.id}@users.local"
+    return GatewayUser(
+        id=admin_user.id,
+        email=email,
+        password_hash=admin_user.password_hash,
+        system_role=system_role,
+        token_version=0,
+    )
 
 
 async def get_optional_user_from_request(request: Request):

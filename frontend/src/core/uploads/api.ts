@@ -4,6 +4,7 @@
 
 import { fetch } from "../api/fetcher";
 import { getBackendBaseURL } from "../config";
+import { localizeErrorMessage } from "../errors/localize";
 
 export interface UploadedFileInfo {
   filename: string;
@@ -36,7 +37,7 @@ async function readErrorDetail(
   fallback: string,
 ): Promise<string> {
   const error = await response.json().catch(() => ({ detail: fallback }));
-  return error.detail ?? fallback;
+  return localizeErrorMessage(error.detail ?? fallback, fallback);
 }
 
 /**
@@ -61,7 +62,7 @@ export async function uploadFiles(
   );
 
   if (!response.ok) {
-    throw new Error(await readErrorDetail(response, "Upload failed"));
+    throw new Error(await readErrorDetail(response, "上传失败"));
   }
 
   return response.json();
@@ -101,7 +102,7 @@ export async function deleteUploadedFile(
   );
 
   if (!response.ok) {
-    throw new Error(await readErrorDetail(response, "Failed to delete file"));
+    throw new Error(await readErrorDetail(response, "删除文件失败"));
   }
 
   return response.json();

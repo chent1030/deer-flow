@@ -75,19 +75,26 @@ const configureApiProxy: NonNullable<ProxyOptions['configure']> = (proxy) => {
   })
 }
 
+const apiProxy: Record<string, ProxyOptions> = {
+  '/api': {
+    target: 'http://localhost:8001',
+    changeOrigin: false,
+    configure: configureApiProxy,
+  },
+}
+
 export default defineConfig({
+  base: '/admin/',
   plugins: [
     react(),
     tailwindcss(),
   ],
   server: {
     port: 3002,
-    proxy: {
-      '/api': {
-        target: 'http://localhost:8001',
-        changeOrigin: true,
-        configure: configureApiProxy,
-      },
-    },
+    proxy: apiProxy,
+  },
+  preview: {
+    port: 3002,
+    proxy: apiProxy,
   },
 })

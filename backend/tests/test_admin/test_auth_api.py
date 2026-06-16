@@ -1,3 +1,5 @@
+from unittest.mock import MagicMock, patch
+
 import pytest
 
 from app.admin.config import JwtConfig
@@ -23,6 +25,70 @@ async def test_login_success(client, seed_data):
     assert "access_token" in data
     assert "refresh_token" in data
     assert data["token_type"] == "bearer"
+
+
+@pytest.mark.asyncio
+async def test_login_success_with_dict_admin_config(client, seed_data):
+    admin_config = {
+        "database_url": "sqlite+aiosqlite:///:memory:",
+        "jwt": {
+            "secret_key": "test-secret-key",
+            "access_token_expire_minutes": 60,
+            "refresh_token_expire_days": 7,
+        },
+    }
+    mock_config = MagicMock()
+    mock_config.admin = admin_config
+
+    with patch("app.admin.deps.get_app_config", return_value=mock_config):
+        resp = await client.post(
+            "/api/admin/auth/login",
+            json={
+                "username": "superadmin",
+                "password": "admin123",
+            },
+        )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "access_token" in data
+    assert "refresh_token" in data
+
+
+@pytest.mark.asyncio
+async def test_admin_session_cookie_resolves_as_gateway_user(client, seed_data, db_session):
+    from types import SimpleNamespace
+
+    from app.gateway.deps import get_admin_session_user_from_request
+
+    class _SessionContext:
+        def __init__(self, session):
+            self.session = session
+
+        async def __aenter__(self):
+            return self.session
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    resp = await client.post(
+        "/api/admin/auth/login",
+        json={
+            "username": "superadmin",
+            "password": "admin123",
+        },
+    )
+    access_token = resp.json()["access_token"]
+    request = SimpleNamespace(
+        cookies={"access_token": access_token},
+        app=SimpleNamespace(state=SimpleNamespace(admin_session_factory=lambda: _SessionContext(db_session))),
+    )
+
+    user = await get_admin_session_user_from_request(request)
+
+    assert str(user.id) == str(seed_data["super_admin"].id)
+    assert user.email == "super@example.com"
+    assert user.system_role == "admin"
 
 
 @pytest.mark.asyncio

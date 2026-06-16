@@ -1,26 +1,50 @@
 "use client";
 
 import { LogOutIcon } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { fetch, getCsrfHeaders } from "@/core/api/fetcher";
-import { useAuth } from "@/core/auth/AuthProvider";
+import {
+  type AdminAccount,
+  changeCurrentAccountPassword,
+  fetchCurrentAccount,
+  formatAccountRole,
+} from "@/core/auth/account";
 import { parseAuthError } from "@/core/auth/types";
 import { useI18n } from "@/core/i18n/hooks";
 
 import { SettingsSection } from "./settings-section";
 
 export function AccountSettingsPage() {
-  const { user, logout } = useAuth();
   const { t } = useI18n();
+  const [user, setUser] = useState<AdminAccount | null>(null);
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    void fetchCurrentAccount().then((account) => {
+      if (alive) {
+        setUser(account);
+      }
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const logout = async () => {
+    await globalThis.fetch("/api/logout", {
+      method: "POST",
+      credentials: "include",
+    });
+    window.location.href = "/";
+  };
 
   const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -38,17 +62,10 @@ export function AccountSettingsPage() {
 
     setLoading(true);
     try {
-      const res = await fetch("/api/v1/auth/change-password", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...getCsrfHeaders(),
-        },
-        body: JSON.stringify({
-          current_password: currentPassword,
-          new_password: newPassword,
-        }),
-      });
+      const res = await changeCurrentAccountPassword(
+        currentPassword,
+        newPassword,
+      );
 
       if (!res.ok) {
         const data = await res.json();
@@ -74,14 +91,22 @@ export function AccountSettingsPage() {
         <div className="space-y-2">
           <div className="grid grid-cols-[max-content_max-content] items-center gap-4">
             <span className="text-muted-foreground text-sm">
-              {t.settings.account.email}
+              {t.settings.account.username}
             </span>
-            <span className="text-sm font-medium">{user?.email ?? "—"}</span>
+            <span className="text-sm font-medium">
+              {user?.username ?? "-"}
+            </span>
+            <span className="text-muted-foreground text-sm">
+              {t.settings.account.displayName}
+            </span>
+            <span className="text-sm font-medium">
+              {user?.display_name || "-"}
+            </span>
             <span className="text-muted-foreground text-sm">
               {t.settings.account.role}
             </span>
             <span className="text-sm font-medium capitalize">
-              {user?.system_role ?? "—"}
+              {user ? formatAccountRole(user.role) : "-"}
             </span>
           </div>
         </div>

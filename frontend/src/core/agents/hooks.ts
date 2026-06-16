@@ -5,6 +5,8 @@ import {
   deleteAgent,
   getAgent,
   listAgents,
+  searchShareUsers,
+  shareAgent,
   updateAgent,
 } from "./api";
 import type { CreateAgentRequest, UpdateAgentRequest } from "./types";
@@ -57,6 +59,24 @@ export function useDeleteAgent() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (name: string) => deleteAgent(name),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["agents"] });
+    },
+  });
+}
+
+export function useShareUsers(search: string) {
+  return useQuery({
+    queryKey: ["share-users", search],
+    queryFn: () => searchShareUsers(search),
+  });
+}
+
+export function useShareAgent() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ name, userIds }: { name: string; userIds: string[] }) =>
+      shareAgent(name, { user_ids: userIds }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["agents"] });
     },

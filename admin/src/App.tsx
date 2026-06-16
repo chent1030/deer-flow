@@ -14,8 +14,10 @@ import UserListPage from './pages/users/UserListPage';
 import SkillListPage from './pages/skills/SkillListPage';
 import DepartmentPage from './pages/departments/DepartmentPage';
 import ThreadListPage from './pages/threads/ThreadListPage';
+import AgentShareRecordPage from './pages/agentShares/AgentShareRecordPage';
 
 const queryClient = new QueryClient();
+const adminBasename = window.location.pathname.startsWith('/admin') ? '/admin' : undefined;
 
 function App() {
   const initialize = useAuthStore((s) => s.initialize);
@@ -27,10 +29,10 @@ function App() {
   return (
     <ConfigProvider locale={zhCN}>
       <QueryClientProvider client={queryClient}>
-        <BrowserRouter>
+        <BrowserRouter basename={adminBasename}>
           <Routes>
             <Route path="/login" element={<LoginPage />} />
-            <Route path="/admin" element={<AuthGuard><AdminLayout /></AuthGuard>}>
+            <Route path="/" element={<AuthGuard><AdminLayout /></AuthGuard>}>
               <Route index element={<Navigate to="dashboard" />} />
               <Route path="dashboard" element={<DashboardPage />} />
               <Route path="users" element={<RoleGuard roles={[UserRole.SUPER_ADMIN, UserRole.DEPT_ADMIN]}><UserListPage /></RoleGuard>} />
@@ -38,8 +40,9 @@ function App() {
               <Route path="skills/review" element={<RoleGuard roles={[UserRole.SUPER_ADMIN]}><SkillListPage showReview /></RoleGuard>} />
               <Route path="departments" element={<RoleGuard roles={[UserRole.SUPER_ADMIN]}><DepartmentPage /></RoleGuard>} />
               <Route path="threads" element={<RoleGuard roles={[UserRole.SUPER_ADMIN]}><ThreadListPage /></RoleGuard>} />
+              <Route path="agent-shares" element={<RoleGuard roles={[UserRole.SUPER_ADMIN]}><AgentShareRecordPage /></RoleGuard>} />
             </Route>
-            <Route path="*" element={<Navigate to="/admin" />} />
+            <Route path="*" element={<Navigate to="/" />} />
           </Routes>
         </BrowserRouter>
       </QueryClientProvider>

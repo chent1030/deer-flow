@@ -3,13 +3,15 @@ import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.admin.config import AdminConfig
 from app.admin.minio import MinioClient
 from app.admin.routers import audit_threads as admin_audit_threads
+from app.admin.routers import agent_share_records as admin_agent_share_records
 from app.admin.routers import auth as admin_auth
 from app.admin.routers import departments as admin_depts
 from app.admin.routers import skills as admin_skills
@@ -18,6 +20,7 @@ from app.gateway.auth_middleware import AuthMiddleware
 from app.gateway.config import get_gateway_config
 from app.gateway.csrf_middleware import CSRFMiddleware, get_configured_cors_origins
 from app.gateway.deps import langgraph_runtime
+from app.gateway.error_localization import localize_error_detail
 from app.gateway.routers import (
     agents,
     artifacts,
@@ -35,6 +38,7 @@ from app.gateway.routers import (
     thread_runs,
     threads,
     uploads,
+    users,
 )
 from deerflow.config import app_config as deerflow_app_config
 from deerflow.config.app_config import apply_logging_level
@@ -352,6 +356,14 @@ This gateway provides runtime endpoints for agent runs plus custom endpoints for
         ],
     )
 
+    @app.exception_handler(HTTPException)
+    async def localized_http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": localize_error_detail(exc.detail)},
+            headers=exc.headers,
+        )
+
     # Auth: reject unauthenticated requests to non-public paths (fail-closed safety net)
     app.add_middleware(AuthMiddleware)
 
@@ -396,6 +408,9 @@ This gateway provides runtime endpoints for agent runs plus custom endpoints for
     # Agents API is mounted at /api/agents
     app.include_router(agents.router)
 
+    # User lookup API is mounted at /api/users
+    app.include_router(users.router)
+
     # Suggestions API is mounted at /api/threads/{thread_id}/suggestions
     app.include_router(suggestions.router)
 
@@ -420,6 +435,7 @@ This gateway provides runtime endpoints for agent runs plus custom endpoints for
     app.include_router(admin_depts.router)
     app.include_router(admin_skills.router)
     app.include_router(admin_audit_threads.router)
+    app.include_router(admin_agent_share_records.router)
 
     # Scheduler API
     app.include_router(scheduler.router)
@@ -436,6 +452,10 @@ This gateway provides runtime endpoints for agent runs plus custom endpoints for
         """
         return {"status": "healthy", "service": "deer-flow-gateway"}
 
+    return app
+
+
+def get_app() -> FastAPI:
     return app
 
 

@@ -1,6 +1,7 @@
 import logging
 import uuid
 from collections.abc import AsyncGenerator
+from typing import Any
 
 import jwt
 from fastapi import Depends, HTTPException, Request, status
@@ -17,7 +18,12 @@ logger = logging.getLogger(__name__)
 
 
 def _get_admin_config() -> AdminConfig:
-    return get_app_config().admin
+    admin_config: Any = get_app_config().admin
+    if isinstance(admin_config, AdminConfig):
+        return admin_config
+    if isinstance(admin_config, dict):
+        return AdminConfig.model_validate(admin_config)
+    return AdminConfig.model_validate(admin_config.model_dump())
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:

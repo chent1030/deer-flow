@@ -130,6 +130,11 @@ export interface Translations {
     delete: string;
     deleteConfirm: string;
     deleteSuccess: string;
+    share: string;
+    shareTitle: string;
+    shareDescription: string;
+    shareSearchPlaceholder: string;
+    shareNoUsers: string;
     newChat: string;
     createPageTitle: string;
     createPageSubtitle: string;
@@ -274,6 +279,42 @@ export interface Translations {
     toggleSidebar: string;
   };
 
+  // Scheduler
+  scheduler: {
+    title: string;
+    description: string;
+    createTask: string;
+    noTasks: string;
+    taskName: string;
+    taskNamePlaceholder: string;
+    prompt: string;
+    promptPlaceholder: string;
+    skill: string;
+    skillPlaceholder: string;
+    cronExpression: string;
+    customVariables: string;
+    variableKey: string;
+    variableValue: string;
+    addVariable: string;
+    save: string;
+    deleteConfirm: string;
+    deleteConfirmDescription: string;
+    deleteTask: string;
+    lastExecution: string;
+    nextExecution: string;
+    toggleDisable: string;
+    toggleEnable: string;
+    triggerNow: string;
+    editTask: string;
+    executionHistory: string;
+    noExecutions: string;
+    duration: string;
+    viewDetail: string;
+    executionDetail: string;
+    status: string;
+    messages: string;
+  };
+
   // Settings
   settings: {
     title: string;
@@ -285,6 +326,7 @@ export interface Translations {
       tools: string;
       skills: string;
       notification: string;
+      scheduler: string;
       about: string;
     };
     memory: {
@@ -397,7 +439,8 @@ export interface Translations {
     };
     account: {
       profileTitle: string;
-      email: string;
+      username: string;
+      displayName: string;
       role: string;
       changePasswordTitle: string;
       changePasswordDescription: string;

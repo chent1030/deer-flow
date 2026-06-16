@@ -21,6 +21,8 @@ from app.gateway.auth_middleware import AuthMiddleware, _is_public
         "/api/v1/auth/register",
         "/api/v1/auth/logout",
         "/api/v1/auth/setup-status",
+        "/api/admin/auth/login",
+        "/api/admin/auth/refresh",
     ],
 )
 def test_public_paths(path: str):
@@ -58,6 +60,8 @@ def test_protected_paths(path: str):
         "/api/v1/auth/register/",
         "/api/v1/auth/logout/",
         "/api/v1/auth/setup-status/",
+        "/api/admin/auth/login/",
+        "/api/admin/auth/refresh/",
     ],
 )
 def test_public_auth_paths_with_trailing_slash(path: str):
@@ -159,6 +163,64 @@ def test_protected_path_no_cookie_returns_401(client):
     assert res.status_code == 401
     body = res.json()
     assert body["detail"]["code"] == "not_authenticated"
+
+
+def test_admin_api_allows_bearer_auth_to_reach_admin_router():
+    """Admin routes use their own Bearer JWT dependency, not gateway cookie auth."""
+    from fastapi import FastAPI
+
+    app = FastAPI()
+    app.add_middleware(AuthMiddleware)
+
+    @app.get("/api/admin/auth/me")
+    async def admin_me():
+        return {"ok": True}
+
+    client = TestClient(app)
+
+    res = client.get("/api/admin/auth/me", headers={"Authorization": "Bearer admin-token"})
+
+    assert res.status_code == 200
+
+
+def test_protected_path_with_admin_session_cookie_is_authenticated(monkeypatch):
+    """Migrated clerk username sessions must authenticate normal Gateway APIs."""
+    from uuid import uuid4
+
+    from app.admin.auth.jwt import create_access_token as create_admin_access_token
+    from app.admin.config import JwtConfig
+    from app.gateway.auth.models import User
+
+    admin_config = JwtConfig(secret_key="admin-test-secret", access_token_expire_minutes=60)
+    admin_id = uuid4()
+    token = create_admin_access_token(
+        admin_id,
+        "admin",
+        "super_admin",
+        None,
+        "default",
+        admin_config,
+    )
+
+    async def fake_admin_user_from_session(request):
+        return User(
+            id=admin_id,
+            email="admin@example.com",
+            password_hash=None,
+            system_role="admin",
+        )
+
+    monkeypatch.setattr(
+        "app.gateway.deps.get_admin_session_user_from_request",
+        fake_admin_user_from_session,
+    )
+
+    app = _make_app()
+    client = TestClient(app)
+
+    res = client.get("/api/models", cookies={"access_token": token})
+
+    assert res.status_code == 200
 
 
 def test_protected_path_with_junk_cookie_rejected(client):

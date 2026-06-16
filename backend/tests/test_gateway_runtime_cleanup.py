@@ -94,6 +94,146 @@ def test_nginx_defers_cors_to_gateway_allowlist():
         assert "if ($request_method = 'OPTIONS')" not in content
 
 
+def test_local_nginx_admin_route_matches_windows_admin_preview_port():
+    nginx_config = _read("docker/nginx/nginx.local.conf")
+    windows_launcher = _read("scripts/start-prod-windows.ps1")
+
+    assert "location = /admin" in nginx_config
+    assert "return 308 /admin/;" in nginx_config
+    assert "location /admin" in nginx_config
+    assert "proxy_pass http://127.0.0.1:3002;" in nginx_config
+    assert "$adminCmd = \"pnpm preview --host 0.0.0.0 --port 3002\"" in windows_launcher
+
+
+def test_local_nginx_routes_next_login_api_to_frontend_before_gateway_catchall():
+    nginx_config = _read("docker/nginx/nginx.local.conf")
+    login_api_block = re.search(r"location = /api/login \{(?P<body>.*?)\n        \}", nginx_config, re.S)
+    api_catchall = nginx_config.index("location /api/ {")
+
+    assert login_api_block is not None
+    assert nginx_config.index("location = /api/login {") < api_catchall
+    assert "proxy_pass http://frontend;" in login_api_block.group("body")
+
+
+def test_gateway_app_exports_get_app_for_admin_dependencies():
+    gateway_app = _read("backend/app/gateway/app.py")
+
+    assert "def get_app() -> FastAPI:" in gateway_app
+    assert "return app" in gateway_app
+
+
+def test_local_nginx_admin_api_preserves_port_in_forwarded_host():
+    nginx_config = _read("docker/nginx/nginx.local.conf")
+    admin_api_block = re.search(r"location /api/admin \{(?P<body>.*?)\n        \}", nginx_config, re.S)
+
+    assert admin_api_block is not None
+    assert "proxy_set_header Host $http_host;" in admin_api_block.group("body")
+
+
+def test_frontend_root_is_clerk_style_login_flow():
+    root_page = _read("frontend/src/app/page.tsx")
+
+    assert 'fetch("/api/login"' in root_page
+    assert 'router.push("/workspace")' in root_page
+    assert 'redirect("/login")' not in root_page
+    assert "LandingPage" not in root_page
+
+
+def test_workspace_layout_uses_clerk_cookie_flow_without_gateway_session_gate():
+    workspace_layout = _read("frontend/src/app/workspace/layout.tsx")
+
+    assert 'export const dynamic = "force-dynamic"' in workspace_layout
+    assert "getServerSideUser" not in workspace_layout
+    assert "redirect(\"/login\")" not in workspace_layout
+    assert "WorkspaceSidebar" in workspace_layout
+    assert "QueryClientProvider" in workspace_layout
+
+
+def test_admin_router_uses_admin_basename_under_unified_nginx_path():
+    app = _read("admin/src/App.tsx")
+    layout = _read("admin/src/layouts/AdminLayout.tsx")
+
+    assert "adminBasename" in app
+    assert "window.location.pathname.startsWith('/admin')" in app
+    assert "<BrowserRouter basename={adminBasename}>" in app
+    assert 'path="/admin"' not in app
+    assert "key: '/dashboard'" in layout
+    assert "key: '/admin/dashboard'" not in layout
+    assert "replace(/^\\/admin(?=\\/|$)/, '') || '/'" in layout
+
+
+def test_admin_vite_proxy_preserves_browser_host_for_csrf_origin_check():
+    vite_config = _read("admin/vite.config.ts")
+
+    assert "const apiProxy" in vite_config
+    assert "base: '/admin/'" in vite_config
+    assert "changeOrigin: false" in vite_config
+    assert "server: {" in vite_config
+    assert "preview: {" in vite_config
+    assert "proxy: apiProxy" in vite_config
+
+
+def test_frontend_login_route_returns_to_clerk_username_login():
+    auth_layout = _read("frontend/src/app/(auth)/layout.tsx")
+    login_page = _read("frontend/src/app/(auth)/login/page.tsx")
+
+    assert "getServerSideUser" not in auth_layout
+    assert 'redirect("/")' in login_page
+    assert "/api/v1/auth/login/local" not in login_page
+    assert 'type="email"' not in login_page
+
+
+def test_clerk_login_route_forwards_csrf_cookie_from_gateway():
+    login_route = _read("frontend/src/app/api/login/route.ts")
+
+    assert "getUpstreamSetCookies(res.headers)" in login_route
+    assert "headers.getSetCookie?.()" in login_route
+    assert 'readCookieValue(setCookie, "csrf_token")' in login_route
+    assert 'response.cookies.set("csrf_token"' in login_route
+
+
+def test_clerk_login_route_handles_non_json_gateway_errors():
+    login_route = _read("frontend/src/app/api/login/route.ts")
+
+    assert "async function readUpstreamError" in login_route
+    assert "res.headers.get(\"content-type\")" in login_route
+    assert "await res.text()" in login_route
+
+
+def test_windows_launcher_validates_existing_builds_when_skipping_build_step():
+    windows_launcher = _read("scripts/start-prod-windows.ps1")
+
+    assert "function Ensure-FrontendBuild" in windows_launcher
+    assert "function Ensure-AdminBuild" in windows_launcher
+    assert "Ensure-FrontendBuild $repoRoot" in windows_launcher
+    assert "Ensure-AdminBuild $repoRoot" in windows_launcher
+
+
+def test_windows_launcher_uses_repo_local_uv_cache():
+    windows_launcher = _read("scripts/start-prod-windows.ps1")
+
+    assert "$env:UV_CACHE_DIR = Join-Path $repoRoot \".uv-cache\"" in windows_launcher
+    assert "New-Item -ItemType Directory -Force -Path $env:UV_CACHE_DIR" in windows_launcher
+
+
+def test_windows_launcher_rejects_stale_frontend_builds():
+    windows_launcher = _read("scripts/start-prod-windows.ps1")
+
+    assert "function Get-LatestWriteTime" in windows_launcher
+    assert "frontend\\src" in windows_launcher
+    assert "frontend\\package.json" in windows_launcher
+    assert "frontend\\pnpm-lock.yaml" in windows_launcher
+    assert "Frontend production build is stale" in windows_launcher
+
+
+def test_windows_stop_script_cleans_known_service_ports():
+    stop_script = _read("scripts/stop-prod-windows.ps1")
+
+    assert "function Stop-PortProcess" in stop_script
+    for port in ("2024", "8001", "3000", "3002", "2026"):
+        assert port in stop_script
+
+
 def test_gateway_cors_configuration_uses_gateway_allowlist():
     gateway_config = _read("backend/app/gateway/config.py")
     gateway_app = _read("backend/app/gateway/app.py")

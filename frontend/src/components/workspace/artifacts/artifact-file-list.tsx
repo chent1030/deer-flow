@@ -11,6 +11,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { urlOfArtifact } from "@/core/artifacts/utils";
+import { localizeErrorMessage } from "@/core/errors/localize";
 import { useI18n } from "@/core/i18n/hooks";
 import { installSkill } from "@/core/skills/api";
 import {
@@ -59,11 +60,11 @@ export function ArtifactFileList({
         if (result.success) {
           toast.success(result.message);
         } else {
-          toast.error(result.message || "Failed to install skill");
+          toast.error(localizeErrorMessage(result.message, "安装 Skill 失败"));
         }
       } catch (error) {
         console.error("Failed to install skill:", error);
-        toast.error("Failed to install skill");
+        toast.error("安装 Skill 失败");
       } finally {
         setInstallingFile(null);
       }

@@ -1,6 +1,6 @@
 "use client";
 
-import { BotIcon, MessageSquareIcon, Trash2Icon } from "lucide-react";
+import { BotIcon, MessageSquareIcon, Share2Icon, Trash2Icon } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { type ComponentProps, type ReactElement, useState } from "react";
 import { toast } from "sonner";
@@ -30,8 +30,11 @@ import {
 } from "@/components/ui/tooltip";
 import { useDeleteAgent } from "@/core/agents";
 import type { Agent } from "@/core/agents";
+import { localizeErrorMessage } from "@/core/errors/localize";
 import { useI18n } from "@/core/i18n/hooks";
 import { cn } from "@/lib/utils";
+
+import { AgentShareDialog } from "./agent-share-dialog";
 
 interface AgentCardProps {
   agent: Agent;
@@ -105,6 +108,7 @@ export function AgentCard({ agent }: AgentCardProps) {
   const router = useRouter();
   const deleteAgent = useDeleteAgent();
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
 
   function handleChat() {
     router.push(`/workspace/agents/${agent.name}/chats/new`);
@@ -116,7 +120,7 @@ export function AgentCard({ agent }: AgentCardProps) {
       toast.success(t.agents.deleteSuccess);
       setDeleteOpen(false);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err));
+      toast.error(localizeErrorMessage(err instanceof Error ? err.message : String(err)));
     }
   }
 
@@ -186,6 +190,15 @@ export function AgentCard({ agent }: AgentCardProps) {
             <Button
               size="icon"
               variant="ghost"
+              className="h-8 w-8 shrink-0"
+              onClick={() => setShareOpen(true)}
+              title={t.agents.share}
+            >
+              <Share2Icon className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              size="icon"
+              variant="ghost"
               className="text-destructive hover:text-destructive h-8 w-8 shrink-0"
               onClick={() => setDeleteOpen(true)}
               title={t.agents.delete}
@@ -221,6 +234,11 @@ export function AgentCard({ agent }: AgentCardProps) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <AgentShareDialog
+        agent={agent}
+        open={shareOpen}
+        onOpenChange={setShareOpen}
+      />
     </>
   );
 }

@@ -7,6 +7,7 @@ import {
   ApartmentOutlined,
   RobotOutlined,
   AuditOutlined,
+  ShareAltOutlined,
   LogoutOutlined,
   MessageOutlined,
   LockOutlined,
@@ -79,7 +80,7 @@ export default function AdminLayout() {
 
   const menuItems: MenuProps['items'] = [
     {
-      key: '/admin/dashboard',
+      key: '/dashboard',
       icon: <DashboardOutlined />,
       label: '仪表盘',
     },
@@ -87,7 +88,7 @@ export default function AdminLayout() {
 
   if (user?.role === UserRole.SUPER_ADMIN || user?.role === UserRole.DEPT_ADMIN) {
     menuItems!.push({
-      key: '/admin/users',
+      key: '/users',
       icon: <UserOutlined />,
       label: '用户管理',
     });
@@ -95,26 +96,31 @@ export default function AdminLayout() {
 
   if (user?.role === UserRole.SUPER_ADMIN) {
     menuItems!.push({
-      key: '/admin/departments',
+      key: '/departments',
       icon: <ApartmentOutlined />,
       label: '部门管理',
     });
     menuItems!.push({
-      key: '/admin/threads',
+      key: '/threads',
       icon: <MessageOutlined />,
       label: '对话审计',
+    });
+    menuItems!.push({
+      key: '/agent-shares',
+      icon: <ShareAltOutlined />,
+      label: '智能体分享记录',
     });
   }
 
   menuItems!.push({
-    key: '/admin/skills',
+    key: '/skills',
     icon: <RobotOutlined />,
     label: 'Skill 管理',
   });
 
   if (user?.role === UserRole.SUPER_ADMIN) {
     menuItems!.push({
-      key: '/admin/skills/review',
+      key: '/skills/review',
       icon: <AuditOutlined />,
       label: 'Skill 审核',
     });
@@ -138,7 +144,7 @@ export default function AdminLayout() {
     },
   ];
 
-  const selectedKey = location.pathname;
+  const selectedKey = location.pathname.replace(/^\/admin(?=\/|$)/, '') || '/';
 
   return (
     <Layout style={{ minHeight: '100vh' }}>

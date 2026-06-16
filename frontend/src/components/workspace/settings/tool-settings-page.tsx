@@ -8,6 +8,7 @@ import {
   ItemTitle,
 } from "@/components/ui/item";
 import { Switch } from "@/components/ui/switch";
+import { localizeErrorMessage } from "@/core/errors/localize";
 import { useI18n } from "@/core/i18n/hooks";
 import { useMCPConfig, useEnableMCPServer } from "@/core/mcp/hooks";
 import type { MCPServerConfig } from "@/core/mcp/types";
@@ -26,7 +27,7 @@ export function ToolSettingsPage() {
       {isLoading ? (
         <div className="text-muted-foreground text-sm">{t.common.loading}</div>
       ) : error ? (
-        <div>Error: {error.message}</div>
+        <div>错误：{localizeErrorMessage(error.message)}</div>
       ) : (
         config && <MCPServerList servers={config.mcp_servers} />
       )}

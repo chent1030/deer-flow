@@ -4,11 +4,15 @@ import asyncio
 import logging
 import re
 import shutil
+import uuid
 
 import yaml
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.admin.deps import get_db
+from app.admin.services.agent_share_service import share_agent_to_users
 from deerflow.config.agents_api_config import get_agents_api_config
 from deerflow.config.agents_config import AgentConfig, list_custom_agents, load_agent_config, load_agent_soul
 from deerflow.config.paths import get_paths
@@ -58,6 +62,22 @@ class AgentUpdateRequest(BaseModel):
     soul: str | None = Field(default=None, description="Updated SOUL.md content")
 
 
+class AgentShareRequest(BaseModel):
+    user_ids: list[uuid.UUID] = Field(default_factory=list, description="Target user IDs to receive independent copies")
+
+
+class AgentShareResultResponse(BaseModel):
+    target_user_id: str
+    target_username: str | None = None
+    target_agent_name: str | None = None
+    status: str
+    error_message: str | None = None
+
+
+class AgentShareResponse(BaseModel):
+    results: list[AgentShareResultResponse]
+
+
 def _validate_agent_name(name: str) -> None:
     """Validate agent name against allowed pattern.
 
@@ -70,7 +90,7 @@ def _validate_agent_name(name: str) -> None:
     if not AGENT_NAME_PATTERN.match(name):
         raise HTTPException(
             status_code=422,
-            detail=f"Invalid agent name '{name}'. Must match ^[A-Za-z0-9-]+$ (letters, digits, and hyphens only).",
+            detail=f"智能体名称“{name}”无效，只能包含字母、数字和连字符。",
         )
 
 
@@ -84,7 +104,7 @@ def _require_agents_api_enabled() -> None:
     if not get_agents_api_config().enabled:
         raise HTTPException(
             status_code=403,
-            detail=("Custom-agent management API is disabled. Set agents_api.enabled=true to expose agent and user-profile routes over HTTP."),
+            detail="自定义智能体管理接口未启用，请设置 agents_api.enabled=true。",
         )
 
 
@@ -124,7 +144,7 @@ async def list_agents() -> AgentsListResponse:
         return AgentsListResponse(agents=[_agent_config_to_response(a, include_soul=True, user_id=user_id) for a in agents])
     except Exception as e:
         logger.error(f"Failed to list agents: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to list agents: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"加载智能体失败：{str(e)}")
 
 
 @router.get(
@@ -156,6 +176,45 @@ async def check_agent_name(name: str) -> dict:
     return {"available": available, "name": normalized}
 
 
+@router.post(
+    "/agents/{name}/share",
+    response_model=AgentShareResponse,
+    summary="Share Custom Agent",
+    description="Copy a custom agent into selected users' workspaces as independent copies.",
+)
+async def share_agent(
+    name: str,
+    request_body: AgentShareRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> AgentShareResponse:
+    _require_agents_api_enabled()
+    _validate_agent_name(name)
+    name = _normalize_agent_name(name)
+
+    current_user = getattr(request.state, "user", None)
+    current_user_id = getattr(current_user, "id", None)
+    if current_user_id is None:
+        raise HTTPException(status_code=401, detail="请先登录")
+
+    try:
+        source_owner_id = uuid.UUID(str(current_user_id))
+    except ValueError:
+        raise HTTPException(status_code=401, detail="登录用户无效")
+
+    paths = get_paths()
+    if not paths.user_agent_dir(str(source_owner_id), name).exists():
+        raise HTTPException(status_code=404, detail=f"智能体“{name}”不存在")
+
+    results = await share_agent_to_users(
+        db,
+        source_owner_id=source_owner_id,
+        source_agent_name=name,
+        target_user_ids=request_body.user_ids,
+    )
+    return AgentShareResponse(results=[AgentShareResultResponse(**result.__dict__) for result in results])
+
+
 @router.get(
     "/agents/{name}",
     response_model=AgentResponse,
@@ -183,10 +242,10 @@ async def get_agent(name: str) -> AgentResponse:
         agent_cfg = load_agent_config(name, user_id=user_id)
         return _agent_config_to_response(agent_cfg, include_soul=True, user_id=user_id)
     except FileNotFoundError:
-        raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
+        raise HTTPException(status_code=404, detail=f"智能体“{name}”不存在")
     except Exception as e:
         logger.error(f"Failed to get agent '{name}': {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to get agent: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"获取智能体失败：{str(e)}")
 
 
 @router.post(
@@ -262,10 +321,10 @@ async def create_agent_endpoint(request: AgentCreateRequest) -> AgentResponse:
         response = await asyncio.to_thread(_create_agent)
     except Exception as e:
         logger.error(f"Failed to create agent '{request.name}': {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to create agent: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"创建智能体失败：{str(e)}")
 
     if response is None:
-        raise HTTPException(status_code=409, detail=f"Agent '{normalized_name}' already exists")
+        raise HTTPException(status_code=409, detail=f"智能体“{normalized_name}”已存在")
 
     return response
 
@@ -297,14 +356,14 @@ async def update_agent(name: str, request: AgentUpdateRequest) -> AgentResponse:
     try:
         agent_cfg = load_agent_config(name, user_id=user_id)
     except FileNotFoundError:
-        raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
+        raise HTTPException(status_code=404, detail=f"智能体“{name}”不存在")
 
     paths = get_paths()
     agent_dir = paths.user_agent_dir(user_id, name)
     if not agent_dir.exists() and paths.agent_dir(name).exists():
         raise HTTPException(
             status_code=409,
-            detail=(f"Agent '{name}' only exists in the legacy shared layout and is not scoped to a user. Run scripts/migrate_user_isolation.py to move legacy agents into the per-user layout before updating."),
+            detail=f"智能体“{name}”只存在于旧的共享目录中，尚未迁移到用户目录。请先运行 scripts/migrate_user_isolation.py 后再更新。",
         )
 
     try:
@@ -353,7 +412,7 @@ async def update_agent(name: str, request: AgentUpdateRequest) -> AgentResponse:
         raise
     except Exception as e:
         logger.error(f"Failed to update agent '{name}': {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to update agent: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"更新智能体失败：{str(e)}")
 
 
 class UserProfileResponse(BaseModel):
@@ -390,7 +449,7 @@ async def get_user_profile() -> UserProfileResponse:
         return UserProfileResponse(content=raw or None)
     except Exception as e:
         logger.error(f"Failed to read user profile: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to read user profile: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"读取用户画像失败：{str(e)}")
 
 
 @router.put(
@@ -418,7 +477,7 @@ async def update_user_profile(request: UserProfileUpdateRequest) -> UserProfileR
         return UserProfileResponse(content=request.content or None)
     except Exception as e:
         logger.error(f"Failed to update user profile: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to update user profile: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"更新用户画像失败：{str(e)}")
 
 
 @router.delete(
@@ -458,14 +517,14 @@ async def delete_agent(name: str) -> None:
         outcome, agent_dir = await asyncio.to_thread(_remove_agent_dir)
     except Exception as e:
         logger.error(f"Failed to delete agent '{name}': {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to delete agent: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"删除智能体失败：{str(e)}")
 
     if outcome == "legacy":
         raise HTTPException(
             status_code=409,
-            detail=(f"Agent '{name}' only exists in the legacy shared layout and is not scoped to a user. Run scripts/migrate_user_isolation.py to move legacy agents into the per-user layout before deleting."),
+            detail=f"智能体“{name}”只存在于旧的共享目录中，尚未迁移到用户目录。请先运行 scripts/migrate_user_isolation.py 后再删除。",
         )
     if outcome == "missing":
-        raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
+        raise HTTPException(status_code=404, detail=f"智能体“{name}”不存在")
 
     logger.info(f"Deleted agent '{name}' from {agent_dir}")

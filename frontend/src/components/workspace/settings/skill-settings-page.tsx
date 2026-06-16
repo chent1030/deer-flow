@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/item";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { localizeErrorMessage } from "@/core/errors/localize";
 import { useI18n } from "@/core/i18n/hooks";
 import { useEnableSkill, useSkills } from "@/core/skills/hooks";
 import type { Skill } from "@/core/skills/type";
@@ -40,7 +41,7 @@ export function SkillSettingsPage({ onClose }: { onClose?: () => void } = {}) {
       {isLoading ? (
         <div className="text-muted-foreground text-sm">{t.common.loading}</div>
       ) : error ? (
-        <div>Error: {error.message}</div>
+        <div>错误：{localizeErrorMessage(error.message)}</div>
       ) : (
         <SkillSettingsList skills={skills} onClose={onClose} />
       )}

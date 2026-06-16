@@ -1,9 +1,37 @@
 import { fetch } from "@/core/api/fetcher";
 import { getBackendBaseURL } from "@/core/config";
 
-import type { Agent, CreateAgentRequest, UpdateAgentRequest } from "./types";
+import type {
+  Agent,
+  CreateAgentRequest,
+  ShareAgentRequest,
+  ShareAgentResponse,
+  ShareUser,
+  UpdateAgentRequest,
+} from "./types";
 
 const BACKEND_UNAVAILABLE_STATUSES = new Set([502, 503, 504]);
+
+function localizeErrorDetail(detail: string): string {
+  const map: Array<[RegExp, string]> = [
+    [/^Could not reach the DeerFlow backend\.$/, "无法连接到 DeerFlow 后端。"],
+    [/^Failed to load agents: /, "加载智能体失败："],
+    [/^Agent '(.+)' not found$/, "智能体“$1”不存在"],
+    [/^Failed to create agent: /, "创建智能体失败："],
+    [/^Failed to update agent: /, "更新智能体失败："],
+    [/^Failed to delete agent: /, "删除智能体失败："],
+    [/^Failed to share agent: /, "分享智能体失败："],
+    [/^Failed to load users: /, "加载用户失败："],
+    [/^Invalid agent name '(.+)'.*$/, "智能体名称“$1”无效，只能包含字母、数字和连字符。"],
+    [/^Custom-agent management API is disabled\..*$/, "自定义智能体管理接口未启用。"],
+  ];
+  for (const [pattern, replacement] of map) {
+    if (pattern.test(detail)) {
+      return detail.replace(pattern, replacement);
+    }
+  }
+  return detail;
+}
 
 export class AgentNameCheckError extends Error {
   constructor(
@@ -57,9 +85,9 @@ export async function createAgent(request: CreateAgentRequest): Promise<Agent> {
   if (!res.ok) {
     const err = (await res.json().catch(() => ({}))) as { detail?: string };
     if (isAgentsApiDisabledDetail(err.detail)) {
-      throw new AgentsApiDisabledError(err.detail!);
+      throw new AgentsApiDisabledError("自定义智能体管理接口未启用。");
     }
-    throw new Error(err.detail ?? `Failed to create agent: ${res.statusText}`);
+    throw new Error(localizeErrorDetail(err.detail ?? `Failed to create agent: ${res.statusText}`));
   }
   return res.json() as Promise<Agent>;
 }
@@ -75,7 +103,7 @@ export async function updateAgent(
   });
   if (!res.ok) {
     const err = (await res.json().catch(() => ({}))) as { detail?: string };
-    throw new Error(err.detail ?? `Failed to update agent: ${res.statusText}`);
+    throw new Error(localizeErrorDetail(err.detail ?? `Failed to update agent: ${res.statusText}`));
   }
   return res.json() as Promise<Agent>;
 }
@@ -84,7 +112,35 @@ export async function deleteAgent(name: string): Promise<void> {
   const res = await fetch(`${getBackendBaseURL()}/api/agents/${name}`, {
     method: "DELETE",
   });
-  if (!res.ok) throw new Error(`Failed to delete agent: ${res.statusText}`);
+  if (!res.ok) throw new Error(localizeErrorDetail(`Failed to delete agent: ${res.statusText}`));
+}
+
+export async function shareAgent(
+  name: string,
+  request: ShareAgentRequest,
+): Promise<ShareAgentResponse> {
+  const res = await fetch(`${getBackendBaseURL()}/api/agents/${name}/share`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request),
+  });
+  if (!res.ok) {
+    const err = (await res.json().catch(() => ({}))) as { detail?: string };
+    throw new Error(localizeErrorDetail(err.detail ?? `Failed to share agent: ${res.statusText}`));
+  }
+  return res.json() as Promise<ShareAgentResponse>;
+}
+
+export async function searchShareUsers(search: string): Promise<ShareUser[]> {
+  const params = new URLSearchParams();
+  if (search.trim()) params.set("search", search.trim());
+  const query = params.toString();
+  const res = await fetch(
+    `${getBackendBaseURL()}/api/users/search${query ? `?${query}` : ""}`,
+  );
+  if (!res.ok) throw new Error(localizeErrorDetail(`Failed to load users: ${res.statusText}`));
+  const data = (await res.json()) as { users: ShareUser[] };
+  return data.users;
 }
 
 export async function checkAgentName(
@@ -105,7 +161,7 @@ export async function checkAgentName(
   if (!res.ok) {
     const err = (await res.json().catch(() => ({}))) as { detail?: string };
     if (isAgentsApiDisabledDetail(err.detail)) {
-      throw new AgentsApiDisabledError(err.detail!);
+      throw new AgentsApiDisabledError("自定义智能体管理接口未启用。");
     }
     if (BACKEND_UNAVAILABLE_STATUSES.has(res.status)) {
       throw new AgentNameCheckError(
@@ -115,7 +171,7 @@ export async function checkAgentName(
     }
     const backendDetail = typeof err.detail === "string" ? err.detail : null;
     throw new AgentNameCheckError(
-      backendDetail ?? `Failed to check agent name: ${res.statusText}`,
+      localizeErrorDetail(backendDetail ?? `Failed to check agent name: ${res.statusText}`),
       "request_failed",
       backendDetail,
     );

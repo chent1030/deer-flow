@@ -39,6 +39,7 @@ import {
 } from "@/core/artifacts/preview";
 import { urlOfArtifact } from "@/core/artifacts/utils";
 import { writeTextToClipboard } from "@/core/clipboard";
+import { localizeErrorMessage } from "@/core/errors/localize";
 import { useI18n } from "@/core/i18n/hooks";
 import { findToolCallResult } from "@/core/messages/utils";
 import { installSkill } from "@/core/skills/api";
@@ -145,11 +146,11 @@ export function ArtifactFileDetail({
       if (result.success) {
         toast.success(result.message);
       } else {
-        toast.error(result.message ?? "Failed to install skill");
+        toast.error(localizeErrorMessage(result.message, "安装 Skill 失败"));
       }
     } catch (error) {
       console.error("Failed to install skill:", error);
-      toast.error("Failed to install skill");
+      toast.error("安装 Skill 失败");
     } finally {
       setIsInstalling(false);
     }

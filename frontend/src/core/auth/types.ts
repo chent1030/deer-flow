@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { localizeErrorMessage } from "@/core/errors/localize";
 
 // ── User schema (single source of truth) ──────────────────────────
 
@@ -72,23 +73,23 @@ export function parseAuthError(data: unknown): AuthErrorResponse {
     if (nested.success) return nested.data;
     // Legacy string-detail responses
     if (typeof detail === "string") {
-      return { code: "invalid_credentials", message: detail };
+      return { code: "invalid_credentials", message: localizeErrorMessage(detail, "认证失败") };
     } else if (Array.isArray(detail)) {
       // Handle list of error details (e.g. from Pydantic validation)
       const firstDetail = detail[0];
       if (typeof firstDetail === "object" && firstDetail !== null) {
         const errorDetail = ErrorDetailSchema.safeParse(firstDetail);
         if (errorDetail.success) {
-          return { code: "invalid_credentials", message: errorDetail.data.msg };
+          return { code: "invalid_credentials", message: localizeErrorMessage(errorDetail.data.msg, "认证失败") };
         }
       }
     } else if (typeof detail === "object" && detail !== null) {
       const errorDetail = ErrorDetailSchema.safeParse(detail);
       if (errorDetail.success) {
-        return { code: "invalid_credentials", message: errorDetail.data.msg };
+        return { code: "invalid_credentials", message: localizeErrorMessage(errorDetail.data.msg, "认证失败") };
       }
     }
   }
 
-  return { code: "invalid_credentials", message: "Authentication failed" };
+  return { code: "invalid_credentials", message: "认证失败" };
 }

@@ -44,13 +44,13 @@ def _check_csrf(request) -> None:
     if not cookie_token or not header_token:
         raise Auth.exceptions.HTTPException(
             status_code=403,
-            detail="CSRF token missing. Include X-CSRF-Token header.",
+            detail="缺少 CSRF 令牌，请携带 X-CSRF-Token 请求头。",
         )
 
     if not secrets.compare_digest(cookie_token, header_token):
         raise Auth.exceptions.HTTPException(
             status_code=403,
-            detail="CSRF token mismatch.",
+            detail="CSRF 令牌不匹配。",
         )
 
 
@@ -70,26 +70,48 @@ async def authenticate(request):
     if not token:
         raise Auth.exceptions.HTTPException(
             status_code=401,
-            detail="Not authenticated",
+            detail="请先登录。",
         )
 
     payload = decode_token(token)
     if isinstance(payload, TokenError):
-        raise Auth.exceptions.HTTPException(
-            status_code=401,
-            detail="Invalid token",
-        )
+        if payload == TokenError.EXPIRED:
+            raise Auth.exceptions.HTTPException(
+                status_code=401,
+                detail="登录状态无效，请重新登录。",
+            )
+        from types import SimpleNamespace
+
+        from fastapi import HTTPException
+
+        from app.gateway.deps import get_admin_session_user_from_request
+
+        try:
+            user = await get_admin_session_user_from_request(
+                SimpleNamespace(cookies=request.cookies, app=getattr(request, "app", None))
+            )
+        except HTTPException as exc:
+            if exc.status_code == 401:
+                raise Auth.exceptions.HTTPException(
+                    status_code=401,
+                    detail="登录状态无效，请重新登录。",
+                ) from exc
+            raise Auth.exceptions.HTTPException(
+                status_code=exc.status_code,
+                detail=exc.detail,
+            ) from exc
+        return str(user.id)
 
     user = await get_local_provider().get_user(payload.sub)
     if user is None:
         raise Auth.exceptions.HTTPException(
             status_code=401,
-            detail="User not found",
+            detail="用户不存在。",
         )
     if user.token_version != payload.ver:
         raise Auth.exceptions.HTTPException(
             status_code=401,
-            detail="Token revoked (password changed)",
+            detail="登录状态已失效，请重新登录。",
         )
 
     return payload.sub

@@ -2,10 +2,26 @@ import axios from 'axios';
 
 const apiClient = axios.create();
 
+function getCookie(name: string): string | undefined {
+  const match = document.cookie
+    .split('; ')
+    .find((cookie) => cookie.startsWith(`${encodeURIComponent(name)}=`));
+
+  if (!match) {
+    return undefined;
+  }
+
+  return decodeURIComponent(match.split('=').slice(1).join('='));
+}
+
 apiClient.interceptors.request.use((config) => {
   const token = localStorage.getItem('access_token');
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
+  }
+  const csrfToken = getCookie('csrf_token');
+  if (csrfToken) {
+    config.headers['X-CSRF-Token'] = csrfToken;
   }
   return config;
 });
@@ -19,9 +35,14 @@ apiClient.interceptors.response.use(
       const refreshToken = localStorage.getItem('refresh_token');
       if (refreshToken) {
         try {
-          const response = await axios.post('/api/admin/auth/refresh', {
-            refresh_token: refreshToken,
-          });
+          const csrfToken = getCookie('csrf_token');
+          const response = await axios.post(
+            '/api/admin/auth/refresh',
+            {
+              refresh_token: refreshToken,
+            },
+            csrfToken ? { headers: { 'X-CSRF-Token': csrfToken } } : undefined
+          );
           const { access_token, refresh_token } = response.data;
           localStorage.setItem('access_token', access_token);
           localStorage.setItem('refresh_token', refresh_token);

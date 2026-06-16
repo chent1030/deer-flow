@@ -18,6 +18,7 @@ from app.admin.models import Base
 from app.admin.models.department import Department
 from app.admin.models.user import User, UserRole, UserStatus
 from app.admin.routers import audit_threads as admin_audit_threads
+from app.admin.routers import agent_share_records as admin_agent_share_records
 from app.admin.routers import auth as admin_auth
 from app.admin.routers import departments as admin_depts
 from app.admin.routers import skills as admin_skills
@@ -151,6 +152,7 @@ async def client(db_session: AsyncSession, seed_data) -> AsyncGenerator[AsyncCli
     app.include_router(admin_depts.router)
     app.include_router(admin_skills.router)
     app.include_router(admin_audit_threads.router)
+    app.include_router(admin_agent_share_records.router)
 
     async def override_get_db():
         yield db_session
@@ -164,7 +166,6 @@ async def client(db_session: AsyncSession, seed_data) -> AsyncGenerator[AsyncCli
 
     with (
         patch("app.admin.deps.get_app_config", return_value=mock_config),
-        patch("app.admin.routers.auth.get_app_config", return_value=mock_config),
         patch("app.admin.routers.skills._get_minio_client", return_value=mock_minio),
         patch("app.admin.routers.skills._extract_zip_to_skills"),
         patch("app.admin.routers.skills._remove_skill_from_custom"),
