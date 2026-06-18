@@ -27,7 +27,9 @@ export function ToolSettingsPage() {
       {isLoading ? (
         <div className="text-muted-foreground text-sm">{t.common.loading}</div>
       ) : error ? (
-        <div>错误：{localizeErrorMessage(error.message)}</div>
+        <div className="text-destructive text-sm">
+          错误：{localizeErrorMessage(error.message)}
+        </div>
       ) : (
         config && <MCPServerList servers={config.mcp_servers} />
       )}

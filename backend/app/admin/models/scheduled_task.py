@@ -28,7 +28,7 @@ class ScheduledTask(Base, TimestampMixin):
     agent_name: Mapped[str] = mapped_column(String(100), nullable=False)
     agent_description: Mapped[str] = mapped_column(Text, server_default="")
     agent_soul: Mapped[str] = mapped_column(Text, server_default="")
-    skill_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    skill_name: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     cron_expression: Mapped[str] = mapped_column(String(100), nullable=False)
     custom_variables: Mapped[dict | None] = mapped_column(
         JSON,

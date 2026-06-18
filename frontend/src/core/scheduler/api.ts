@@ -1,4 +1,5 @@
 import { authFetch } from "@/core/api";
+import { parseJsonOrThrow } from "@/core/api/response";
 
 import type {
   ScheduledTask,
@@ -8,11 +9,7 @@ import type {
 } from "./types";
 
 async function parseJson<T>(res: Response): Promise<T> {
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(body || res.statusText);
-  }
-  return res.json();
+  return parseJsonOrThrow<T>(res, "定时任务请求失败");
 }
 
 export async function listTasks(): Promise<ScheduledTask[]> {

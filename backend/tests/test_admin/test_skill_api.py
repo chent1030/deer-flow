@@ -4,12 +4,83 @@ import zipfile
 
 import pytest
 
+from app.admin.models.skill import Skill, SkillStatus, SkillVisibility, SkillVisibleUser
+from app.admin.services.skill_service import list_visible_skills_for_user
+
 
 def _make_zip_bytes(name: str = "skill") -> bytes:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
         zf.writestr(f"{name}/SKILL.md", "# Test Skill\n")
     return buf.getvalue()
+
+
+@pytest.mark.asyncio
+async def test_usage_visibility_does_not_expand_for_admin_roles(db_session, seed_data):
+    regular_user = seed_data["regular_user"]
+    super_admin = seed_data["super_admin"]
+    dept_admin = seed_data["dept_admin"]
+
+    company_skill = Skill(
+        name="usage-company-skill",
+        description="visible to everyone",
+        version="1.0.0",
+        author_id=regular_user.id,
+        department_id=None,
+        visibility=SkillVisibility.COMPANY,
+        status=SkillStatus.APPROVED,
+        minio_bucket="test",
+        minio_object_key="skills/company.zip",
+        file_size=1,
+    )
+    private_skill = Skill(
+        name="usage-private-skill",
+        description="author only",
+        version="1.0.0",
+        author_id=regular_user.id,
+        department_id=None,
+        visibility=SkillVisibility.PRIVATE,
+        status=SkillStatus.APPROVED,
+        minio_bucket="test",
+        minio_object_key="skills/private.zip",
+        file_size=1,
+    )
+    specific_skill = Skill(
+        name="usage-specific-skill",
+        description="specific user only",
+        version="1.0.0",
+        author_id=regular_user.id,
+        department_id=None,
+        visibility=SkillVisibility.SPECIFIC_USERS,
+        status=SkillStatus.APPROVED,
+        minio_bucket="test",
+        minio_object_key="skills/specific.zip",
+        file_size=1,
+    )
+    db_session.add_all([company_skill, private_skill, specific_skill])
+    await db_session.flush()
+    db_session.add(SkillVisibleUser(skill_id=specific_skill.id, user_id=regular_user.id))
+    await db_session.flush()
+
+    super_admin_visible = await list_visible_skills_for_user(
+        db_session,
+        super_admin.id,
+        super_admin.role.value,
+        super_admin.department_id,
+    )
+    dept_admin_visible = await list_visible_skills_for_user(
+        db_session,
+        dept_admin.id,
+        dept_admin.role.value,
+        dept_admin.department_id,
+    )
+
+    assert "usage-company-skill" in super_admin_visible
+    assert "usage-company-skill" in dept_admin_visible
+    assert "usage-private-skill" not in super_admin_visible
+    assert "usage-private-skill" not in dept_admin_visible
+    assert "usage-specific-skill" not in super_admin_visible
+    assert "usage-specific-skill" not in dept_admin_visible
 
 
 @pytest.mark.asyncio

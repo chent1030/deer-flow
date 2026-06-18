@@ -45,7 +45,6 @@ export interface ContentBlock {
 export interface TaskCreateRequest {
   agent_description: string;
   agent_soul: string;
-  skill_name: string;
   cron_expression: string;
   custom_variables?: Record<string, string>;
 }
@@ -53,7 +52,6 @@ export interface TaskCreateRequest {
 export interface TaskUpdateRequest {
   agent_description?: string;
   agent_soul?: string;
-  skill_name?: string;
   cron_expression?: string;
   custom_variables?: Record<string, string>;
 }

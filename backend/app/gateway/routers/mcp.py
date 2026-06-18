@@ -72,27 +72,6 @@ class McpConfigUpdateRequest(BaseModel):
 _MASKED_VALUE = "***"
 
 
-async def _require_admin_user(request: Request) -> None:
-    """Require the authenticated caller to be an admin user.
-
-    ``AuthMiddleware`` normally stamps ``request.state.user`` before the
-    request reaches this router. Falling back to the strict dependency keeps
-    this route safe even in tests or alternative ASGI compositions that mount
-    the router without the global middleware.
-    """
-    user = getattr(request.state, "user", None)
-    if user is None:
-        from app.gateway.deps import get_current_user_from_request
-
-        user = await get_current_user_from_request(request)
-
-    if getattr(user, "system_role", None) != "admin":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin privileges required to manage MCP configuration.",
-        )
-
-
 def _allowed_stdio_commands() -> set[str]:
     """Return executable names allowed for API-managed stdio MCP servers."""
     raw = os.environ.get(_MCP_STDIO_COMMAND_ALLOWLIST_ENV)
@@ -261,8 +240,6 @@ async def get_mcp_configuration(request: Request) -> McpConfigResponse:
         }
         ```
     """
-    await _require_admin_user(request)
-
     config = get_extensions_config()
 
     servers = {name: _mask_server_config(McpServerConfigResponse(**server.model_dump())) for name, server in config.mcp_servers.items()}
@@ -308,7 +285,6 @@ async def update_mcp_configuration(request: Request, body: McpConfigUpdateReques
         ```
     """
     try:
-        await _require_admin_user(request)
         _validate_mcp_update_request(body)
 
         # Get the current config path (or determine where to save it)

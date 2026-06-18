@@ -543,7 +543,9 @@ export function MemorySettingsPage() {
             {t.common.loading}
           </div>
         ) : error ? (
-          <div>错误：{localizeErrorMessage(error.message)}</div>
+          <div className="text-destructive text-sm">
+            错误：{localizeErrorMessage(error.message)}
+          </div>
         ) : !memory ? (
           <div className="text-muted-foreground text-sm">
             {t.settings.memory.empty}

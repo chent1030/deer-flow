@@ -298,16 +298,10 @@ async def list_visible_skills_for_user(
         if skill.visibility == SkillVisibility.COMPANY:
             visible_names.append(skill.name)
         elif skill.visibility == SkillVisibility.DEPARTMENT:
-            if user_role in ("super_admin", "dept_admin"):
-                visible_names.append(skill.name)
-                continue
             visible_depts = skill_dept_ids_map.get(str(skill.id), set())
             if department_id and str(department_id) in visible_depts:
                 visible_names.append(skill.name)
         elif skill.visibility == SkillVisibility.SPECIFIC_USERS:
-            if user_role == "super_admin":
-                visible_names.append(skill.name)
-                continue
             result = await db.execute(
                 select(SkillVisibleUser).where(
                     SkillVisibleUser.skill_id == skill.id,
@@ -317,7 +311,7 @@ async def list_visible_skills_for_user(
             if result.scalar_one_or_none():
                 visible_names.append(skill.name)
         elif skill.visibility == SkillVisibility.PRIVATE:
-            if skill.author_id == user_id or user_role == "super_admin":
+            if skill.author_id == user_id:
                 visible_names.append(skill.name)
 
     return visible_names

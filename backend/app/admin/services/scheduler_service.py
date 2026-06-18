@@ -29,8 +29,8 @@ async def create_task(
     *,
     agent_description: str,
     agent_soul: str,
-    skill_name: str,
     cron_expression: str,
+    skill_name: str = "",
     custom_variables: dict | None = None,
 ) -> ScheduledTask:
     if not croniter.is_valid(cron_expression):

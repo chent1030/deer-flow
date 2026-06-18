@@ -1,4 +1,5 @@
 import { getBackendBaseURL } from "../config";
+import { isStateChangingMethod, readCsrfCookie } from "./fetcher";
 
 let isRedirecting = false;
 
@@ -22,6 +23,12 @@ export async function authFetch(
 
   if (!headers.has("Content-Type") && !(rest.body instanceof FormData)) {
     headers.set("Content-Type", "application/json");
+  }
+  if (isStateChangingMethod(rest.method ?? "GET") && !headers.has("X-CSRF-Token")) {
+    const token = readCsrfCookie();
+    if (token) {
+      headers.set("X-CSRF-Token", token);
+    }
   }
 
   const response = await fetch(url, {

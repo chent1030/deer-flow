@@ -2,9 +2,11 @@ import json
 import logging
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from app.admin.models.user import User
+from app.admin.services import skill_service as admin_skill_service
 from app.gateway.deps import get_config
 from app.gateway.path_utils import resolve_thread_virtual_path
 from deerflow.agents.lead_agent.prompt import refresh_skills_system_prompt_cache_async
@@ -85,16 +87,68 @@ def _skill_to_response(skill: Skill) -> SkillResponse:
     )
 
 
+async def _load_visible_skill_names_for_current_user(request: Request) -> set[str] | None:
+    auth = getattr(request.state, "auth", None)
+    if auth is None:
+        return None
+    user = auth.user
+    if user is None or user.id is None:
+        return None
+
+    from app.gateway.app import get_app
+
+    app = get_app()
+    session_factory = getattr(app.state, "admin_session_factory", None)
+    if session_factory is None:
+        return None
+    async with session_factory() as db:
+        admin_user = await db.get(User, user.id)
+        if admin_user is None:
+            return set()
+        visible_names = await admin_skill_service.list_visible_skills_for_user(
+            db,
+            admin_user.id,
+            admin_user.role.value,
+            admin_user.department_id,
+        )
+        return set(visible_names)
+
+
+def _is_admin_visible_skill(skill: Skill, visible_skill_names: set[str]) -> bool:
+    if skill.category != SkillCategory.CUSTOM:
+        return True
+    return skill.name in visible_skill_names
+
+
+async def _require_admin_visible_custom_skill(skill_name: str, request: Request, skill: Skill | None = None) -> None:
+    if skill is not None and skill.category != SkillCategory.CUSTOM:
+        return
+    visible_skill_names = await _load_visible_skill_names_for_current_user(request)
+    if visible_skill_names is None:
+        return
+    if skill_name not in visible_skill_names:
+        raise HTTPException(status_code=404, detail=f"Custom skill '{skill_name}' not found")
+
+
 @router.get(
     "/skills",
     response_model=SkillsListResponse,
     summary="List All Skills",
     description="Retrieve a list of all available skills from both public and custom directories.",
 )
-async def list_skills(config: AppConfig = Depends(get_config)) -> SkillsListResponse:
+async def list_skills(request: Request, config: AppConfig = Depends(get_config)) -> SkillsListResponse:
     try:
-        skills = get_or_new_skill_storage(app_config=config).load_skills(enabled_only=False)
-        return SkillsListResponse(skills=[_skill_to_response(skill) for skill in skills])
+        visible_skill_names = await _load_visible_skill_names_for_current_user(request)
+        skills = get_or_new_skill_storage(app_config=config).load_skills(enabled_only=True)
+        if visible_skill_names is None:
+            return SkillsListResponse(skills=[_skill_to_response(skill) for skill in skills])
+        return SkillsListResponse(
+            skills=[
+                _skill_to_response(skill)
+                for skill in skills
+                if _is_admin_visible_skill(skill, visible_skill_names)
+            ]
+        )
     except Exception as e:
         logger.error(f"Failed to load skills: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to load skills: {str(e)}")
@@ -126,9 +180,15 @@ async def install_skill(request: SkillInstallRequest, config: AppConfig = Depend
 
 
 @router.get("/skills/custom", response_model=SkillsListResponse, summary="List Custom Skills")
-async def list_custom_skills(config: AppConfig = Depends(get_config)) -> SkillsListResponse:
+async def list_custom_skills(request: Request, config: AppConfig = Depends(get_config)) -> SkillsListResponse:
     try:
-        skills = [skill for skill in get_or_new_skill_storage(app_config=config).load_skills(enabled_only=False) if skill.category == SkillCategory.CUSTOM]
+        visible_skill_names = await _load_visible_skill_names_for_current_user(request)
+        skills = [
+            skill
+            for skill in get_or_new_skill_storage(app_config=config).load_skills(enabled_only=False)
+            if skill.category == SkillCategory.CUSTOM
+            and (visible_skill_names is None or _is_admin_visible_skill(skill, visible_skill_names))
+        ]
         return SkillsListResponse(skills=[_skill_to_response(skill) for skill in skills])
     except Exception as e:
         logger.error("Failed to list custom skills: %s", e, exc_info=True)
@@ -136,13 +196,14 @@ async def list_custom_skills(config: AppConfig = Depends(get_config)) -> SkillsL
 
 
 @router.get("/skills/custom/{skill_name}", response_model=CustomSkillContentResponse, summary="Get Custom Skill Content")
-async def get_custom_skill(skill_name: str, config: AppConfig = Depends(get_config)) -> CustomSkillContentResponse:
+async def get_custom_skill(skill_name: str, request: Request, config: AppConfig = Depends(get_config)) -> CustomSkillContentResponse:
     try:
         skill_name = skill_name.replace("\r\n", "").replace("\n", "")
         skills = get_or_new_skill_storage(app_config=config).load_skills(enabled_only=False)
         skill = next((s for s in skills if s.name == skill_name and s.category == SkillCategory.CUSTOM), None)
         if skill is None:
             raise HTTPException(status_code=404, detail=f"Custom skill '{skill_name}' not found")
+        await _require_admin_visible_custom_skill(skill_name, request, skill)
         return CustomSkillContentResponse(**_skill_to_response(skill).model_dump(), content=get_or_new_skill_storage(app_config=config).read_custom_skill(skill_name))
     except HTTPException:
         raise
@@ -152,10 +213,11 @@ async def get_custom_skill(skill_name: str, config: AppConfig = Depends(get_conf
 
 
 @router.put("/skills/custom/{skill_name}", response_model=CustomSkillContentResponse, summary="Edit Custom Skill")
-async def update_custom_skill(skill_name: str, request: CustomSkillUpdateRequest, config: AppConfig = Depends(get_config)) -> CustomSkillContentResponse:
+async def update_custom_skill(skill_name: str, request: CustomSkillUpdateRequest, http_request: Request, config: AppConfig = Depends(get_config)) -> CustomSkillContentResponse:
     try:
         skill_name = skill_name.replace("\r\n", "").replace("\n", "")
         storage = get_or_new_skill_storage(app_config=config)
+        await _require_admin_visible_custom_skill(skill_name, http_request)
         storage.ensure_custom_skill_is_editable(skill_name)
         storage.validate_skill_markdown_content(skill_name, request.content)
         scan = await scan_skill_content(request.content, executable=False, location=f"{skill_name}/{SKILL_MD_FILE}", app_config=config)
@@ -176,7 +238,7 @@ async def update_custom_skill(skill_name: str, request: CustomSkillUpdateRequest
             },
         )
         await refresh_skills_system_prompt_cache_async()
-        return await get_custom_skill(skill_name, config)
+        return await get_custom_skill(skill_name, http_request, config)
     except HTTPException:
         raise
     except FileNotFoundError as e:
@@ -189,10 +251,11 @@ async def update_custom_skill(skill_name: str, request: CustomSkillUpdateRequest
 
 
 @router.delete("/skills/custom/{skill_name}", summary="Delete Custom Skill")
-async def delete_custom_skill(skill_name: str, config: AppConfig = Depends(get_config)) -> dict[str, bool]:
+async def delete_custom_skill(skill_name: str, request: Request, config: AppConfig = Depends(get_config)) -> dict[str, bool]:
     try:
         skill_name = skill_name.replace("\r\n", "").replace("\n", "")
         storage = get_or_new_skill_storage(app_config=config)
+        await _require_admin_visible_custom_skill(skill_name, request)
         storage.delete_custom_skill(
             skill_name,
             history_meta={
@@ -217,10 +280,11 @@ async def delete_custom_skill(skill_name: str, config: AppConfig = Depends(get_c
 
 
 @router.get("/skills/custom/{skill_name}/history", response_model=CustomSkillHistoryResponse, summary="Get Custom Skill History")
-async def get_custom_skill_history(skill_name: str, config: AppConfig = Depends(get_config)) -> CustomSkillHistoryResponse:
+async def get_custom_skill_history(skill_name: str, request: Request, config: AppConfig = Depends(get_config)) -> CustomSkillHistoryResponse:
     try:
         skill_name = skill_name.replace("\r\n", "").replace("\n", "")
         storage = get_or_new_skill_storage(app_config=config)
+        await _require_admin_visible_custom_skill(skill_name, request)
         if not storage.custom_skill_exists(skill_name) and not storage.get_skill_history_file(skill_name).exists():
             raise HTTPException(status_code=404, detail=f"Custom skill '{skill_name}' not found")
         return CustomSkillHistoryResponse(history=storage.read_history(skill_name))
@@ -232,9 +296,10 @@ async def get_custom_skill_history(skill_name: str, config: AppConfig = Depends(
 
 
 @router.post("/skills/custom/{skill_name}/rollback", response_model=CustomSkillContentResponse, summary="Rollback Custom Skill")
-async def rollback_custom_skill(skill_name: str, request: SkillRollbackRequest, config: AppConfig = Depends(get_config)) -> CustomSkillContentResponse:
+async def rollback_custom_skill(skill_name: str, request: SkillRollbackRequest, http_request: Request, config: AppConfig = Depends(get_config)) -> CustomSkillContentResponse:
     try:
         storage = get_or_new_skill_storage(app_config=config)
+        await _require_admin_visible_custom_skill(skill_name, http_request)
         if not storage.custom_skill_exists(skill_name) and not storage.get_skill_history_file(skill_name).exists():
             raise HTTPException(status_code=404, detail=f"Custom skill '{skill_name}' not found")
         history = storage.read_history(skill_name)
@@ -264,7 +329,7 @@ async def rollback_custom_skill(skill_name: str, request: SkillRollbackRequest, 
         storage.write_custom_skill(skill_name, SKILL_MD_FILE, target_content)
         storage.append_history(skill_name, history_entry)
         await refresh_skills_system_prompt_cache_async()
-        return await get_custom_skill(skill_name, config)
+        return await get_custom_skill(skill_name, http_request, config)
     except HTTPException:
         raise
     except IndexError:
@@ -284,13 +349,16 @@ async def rollback_custom_skill(skill_name: str, request: SkillRollbackRequest, 
     summary="Get Skill Details",
     description="Retrieve detailed information about a specific skill by its name.",
 )
-async def get_skill(skill_name: str, config: AppConfig = Depends(get_config)) -> SkillResponse:
+async def get_skill(skill_name: str, request: Request, config: AppConfig = Depends(get_config)) -> SkillResponse:
     try:
         skill_name = skill_name.replace("\r\n", "").replace("\n", "")
         skills = get_or_new_skill_storage(app_config=config).load_skills(enabled_only=False)
         skill = next((s for s in skills if s.name == skill_name), None)
 
         if skill is None:
+            raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
+        visible_skill_names = await _load_visible_skill_names_for_current_user(request)
+        if visible_skill_names is not None and not _is_admin_visible_skill(skill, visible_skill_names):
             raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
 
         return _skill_to_response(skill)
@@ -307,13 +375,16 @@ async def get_skill(skill_name: str, config: AppConfig = Depends(get_config)) ->
     summary="Update Skill",
     description="Update a skill's enabled status by modifying the extensions_config.json file.",
 )
-async def update_skill(skill_name: str, request: SkillUpdateRequest, config: AppConfig = Depends(get_config)) -> SkillResponse:
+async def update_skill(skill_name: str, request_body: SkillUpdateRequest, request: Request, config: AppConfig = Depends(get_config)) -> SkillResponse:
     try:
         skill_name = skill_name.replace("\r\n", "").replace("\n", "")
         skills = get_or_new_skill_storage(app_config=config).load_skills(enabled_only=False)
         skill = next((s for s in skills if s.name == skill_name), None)
 
         if skill is None:
+            raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
+        visible_skill_names = await _load_visible_skill_names_for_current_user(request)
+        if visible_skill_names is not None and not _is_admin_visible_skill(skill, visible_skill_names):
             raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
 
         config_path = ExtensionsConfig.resolve_config_path()
@@ -322,7 +393,7 @@ async def update_skill(skill_name: str, request: SkillUpdateRequest, config: App
             logger.info(f"No existing extensions config found. Creating new config at: {config_path}")
 
         extensions_config = get_extensions_config()
-        extensions_config.skills[skill_name] = SkillStateConfig(enabled=request.enabled)
+        extensions_config.skills[skill_name] = SkillStateConfig(enabled=request_body.enabled)
 
         config_data = {
             "mcpServers": {name: server.model_dump() for name, server in extensions_config.mcp_servers.items()},
@@ -337,12 +408,20 @@ async def update_skill(skill_name: str, request: SkillUpdateRequest, config: App
         await refresh_skills_system_prompt_cache_async()
 
         skills = get_or_new_skill_storage(app_config=config).load_skills(enabled_only=False)
-        updated_skill = next((s for s in skills if s.name == skill_name), None)
+        updated_skill = next(
+            (
+                s
+                for s in skills
+                if s.name == skill_name
+                and (visible_skill_names is None or _is_admin_visible_skill(s, visible_skill_names))
+            ),
+            None,
+        )
 
         if updated_skill is None:
             raise HTTPException(status_code=500, detail=f"Failed to reload skill '{skill_name}' after update")
 
-        logger.info(f"Skill '{skill_name}' enabled status updated to {request.enabled}")
+        logger.info(f"Skill '{skill_name}' enabled status updated to {request_body.enabled}")
         return _skill_to_response(updated_skill)
 
     except HTTPException:

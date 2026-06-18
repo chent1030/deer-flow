@@ -17,7 +17,7 @@ router = APIRouter(prefix="/api/scheduler", tags=["scheduler"])
 class TaskCreateRequest(BaseModel):
     agent_description: str = Field(default="", description="Agent description")
     agent_soul: str = Field(default="", description="Agent soul content")
-    skill_name: str = Field(..., description="Skill to execute")
+    skill_name: str = Field(default="", description="Deprecated; scheduled tasks no longer require a selected skill")
     cron_expression: str = Field(..., description="Cron expression for scheduling")
     custom_variables: dict | None = Field(default=None, description="Custom variables")
 
@@ -109,7 +109,7 @@ async def create_task(
             user.id,
             agent_description=request.agent_description,
             agent_soul=request.agent_soul,
-            skill_name=request.skill_name,
+            skill_name=request.skill_name or "",
             cron_expression=request.cron_expression,
             custom_variables=request.custom_variables,
         )

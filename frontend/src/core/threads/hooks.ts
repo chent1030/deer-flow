@@ -19,6 +19,7 @@ import { useI18n } from "../i18n/hooks";
 import { isHiddenFromUIMessage } from "../messages/utils";
 import type { FileInMessage } from "../messages/utils";
 import type { LocalSettings } from "../settings";
+import { loadVisibleSkillNames } from "../skills";
 import { useUpdateSubtask } from "../tasks/context";
 import type { UploadedFileInfo } from "../uploads";
 import { promptInputFilePartToFile, uploadFiles } from "../uploads";
@@ -753,6 +754,7 @@ export function useThreadStream({
             status: "uploaded" as const,
           }),
         );
+        const visibleSkillNames = await loadVisibleSkillNames();
 
         await thread.submit(
           {
@@ -787,6 +789,7 @@ export function useThreadStream({
               thinking_enabled: context.mode !== "flash",
               is_plan_mode: context.mode === "pro" || context.mode === "ultra",
               subagent_enabled: context.mode === "ultra",
+              visible_skills: visibleSkillNames,
               reasoning_effort:
                 context.reasoning_effort ??
                 (context.mode === "ultra"

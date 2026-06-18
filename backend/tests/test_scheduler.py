@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from app.gateway.routers.scheduler import TaskCreateRequest
 from deerflow.scheduler.manager import SchedulerManager
 from deerflow.scheduler.template_engine import render_template
 
@@ -70,6 +71,16 @@ def test_multiple_variables():
     assert "testuser" in result
     assert "库存" in result
     assert "{{" not in result
+
+
+def test_task_create_request_does_not_require_skill_name():
+    request = TaskCreateRequest(
+        agent_description="daily report",
+        agent_soul="Summarize today's work",
+        cron_expression="0 9 * * *",
+    )
+
+    assert request.skill_name == ""
 
 
 class TestSchedulerManager:

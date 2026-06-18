@@ -12,7 +12,7 @@ import {
   Eye,
   Loader2,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -25,17 +25,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { CronBuilder, cronToHuman } from "@/components/workspace/settings/cron-builder";
 import { SettingsSection } from "@/components/workspace/settings/settings-section";
-import { authFetch } from "@/core/api";
 import { localizeErrorMessage } from "@/core/errors/localize";
 import { useI18n } from "@/core/i18n/hooks";
 import {
@@ -243,25 +235,12 @@ function TaskForm({ task, onSave, onCancel, isSaving, t }: TaskFormProps) {
   const isEdit = !!task;
   const [name, setName] = useState(task?.agent_description ?? "");
   const [prompt, setPrompt] = useState(task?.agent_soul ?? "");
-  const [skillName, setSkillName] = useState(task?.skill_name ?? "");
   const [cronExpression, setCronExpression] = useState(task?.cron_expression ?? "* * * * *");
   const [variables, setVariables] = useState<{ key: string; value: string }[]>(() => {
     const cv = task?.custom_variables;
     if (!cv) return [];
     return Object.entries(cv).map(([key, value]) => ({ key, value }));
   });
-  const [skills, setSkills] = useState<string[]>([]);
-
-  useEffect(() => {
-    authFetch("/api/skills")
-      .then((r) => r.json())
-      .then((data) => {
-        const names = data.skills?.map((s: { name: string }) => s.name) ?? [];
-        setSkills(names);
-      })
-      .catch(() => undefined);
-  }, []);
-
   const handleSave = () => {
     const custom_variables: Record<string, string> = {};
     for (const v of variables) {
@@ -270,7 +249,6 @@ function TaskForm({ task, onSave, onCancel, isSaving, t }: TaskFormProps) {
     const req = {
       agent_description: name,
       agent_soul: prompt,
-      skill_name: skillName,
       cron_expression: cronExpression,
       custom_variables: Object.keys(custom_variables).length > 0 ? custom_variables : undefined,
     };
@@ -307,22 +285,6 @@ function TaskForm({ task, onSave, onCancel, isSaving, t }: TaskFormProps) {
       </div>
 
       <div>
-        <label className="mb-1 block text-sm font-medium">{t.scheduler.skill}</label>
-        <Select value={skillName} onValueChange={setSkillName}>
-          <SelectTrigger>
-            <SelectValue placeholder={t.scheduler.skillPlaceholder} />
-          </SelectTrigger>
-          <SelectContent>
-            {skills.map((s) => (
-              <SelectItem key={s} value={s}>
-                {s}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-
-      <div>
         <label className="mb-1 block text-sm font-medium">{t.scheduler.cronExpression}</label>
         <CronBuilder value={cronExpression} onChange={setCronExpression} />
       </div>
@@ -355,7 +317,7 @@ function TaskForm({ task, onSave, onCancel, isSaving, t }: TaskFormProps) {
       </div>
 
       <div className="flex gap-2">
-        <Button onClick={handleSave} disabled={isSaving || !name || !prompt || !skillName || !cronExpression}>
+        <Button onClick={handleSave} disabled={isSaving || !name || !prompt || !cronExpression}>
           {isSaving && <Loader2 className="mr-1 size-4 animate-spin" />}
           {isEdit ? t.scheduler.save : t.scheduler.createTask}
         </Button>
