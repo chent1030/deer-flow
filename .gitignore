@@ -19,6 +19,7 @@ __pycache__/
 # Virtual environments
 .venv
 venv/
+backend/uv.lock
 
 # Environment variables
 .env
