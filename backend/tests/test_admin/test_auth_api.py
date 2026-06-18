@@ -2,12 +2,17 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.admin.config import JwtConfig
+from app.admin.config import AdminConfig, JwtConfig
 
 TEST_JWT_CONFIG = JwtConfig(
     secret_key="test-secret-key",
     access_token_expire_minutes=60,
     refresh_token_expire_days=7,
+)
+
+TEST_ADMIN_CONFIG = AdminConfig(
+    database_url="sqlite+aiosqlite:///:memory:",
+    jwt=TEST_JWT_CONFIG,
 )
 
 
@@ -89,6 +94,65 @@ async def test_admin_session_cookie_resolves_as_gateway_user(client, seed_data, 
     assert str(user.id) == str(seed_data["super_admin"].id)
     assert user.email == "super@example.com"
     assert user.system_role == "admin"
+
+
+@pytest.mark.asyncio
+async def test_regular_admin_session_cookie_can_use_gateway_thread_search(seed_data, db_session):
+    from fastapi import FastAPI
+    from httpx import ASGITransport, AsyncClient
+    from langgraph.store.memory import InMemoryStore
+
+    from app.admin.auth.jwt import create_access_token
+    from app.gateway.auth_middleware import AuthMiddleware
+    from app.gateway.routers import auth as gateway_auth
+    from app.gateway.routers import threads
+    from deerflow.persistence.thread_meta.memory import MemoryThreadMetaStore
+
+    seed_data["regular_user"].email = ""
+    db_session.add(seed_data["regular_user"])
+    await db_session.flush()
+
+    class _SessionContext:
+        def __init__(self, session):
+            self.session = session
+
+        async def __aenter__(self):
+            return self.session
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    token = create_access_token(
+        seed_data["regular_user"].id,
+        seed_data["regular_user"].username,
+        seed_data["regular_user"].role.value,
+        seed_data["regular_user"].department_id,
+        "default",
+        TEST_JWT_CONFIG,
+    )
+
+    app = FastAPI()
+    app.add_middleware(AuthMiddleware)
+    app.state.admin_session_factory = lambda: _SessionContext(db_session)
+    app.state.thread_store = MemoryThreadMetaStore(InMemoryStore())
+    app.include_router(gateway_auth.router)
+    app.include_router(threads.router)
+
+    mock_config = MagicMock()
+    mock_config.admin = TEST_ADMIN_CONFIG
+
+    with patch("app.admin.deps.get_app_config", return_value=mock_config):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            c.cookies.set("access_token", token)
+
+            me = await c.get("/api/v1/auth/me")
+            assert me.status_code == 200, me.text
+            assert me.json()["system_role"] == "user"
+            assert me.json()["email"].endswith("@users.deerflow.local.cn")
+
+            search = await c.post("/api/threads/search", json={"limit": 10})
+            assert search.status_code == 200, search.text
 
 
 @pytest.mark.asyncio

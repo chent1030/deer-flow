@@ -445,7 +445,11 @@ async def get_admin_session_user_from_request(request: Request):
         raise HTTPException(status_code=403, detail="User is disabled")
 
     system_role = "user" if admin_user.role == UserRole.USER else "admin"
-    email = admin_user.email or f"{admin_user.id}@users.local"
+    # Admin users migrated from Clerk can legitimately have no email. Gateway's
+    # legacy auth model still requires an EmailStr, so synthesize a stable
+    # internal-only value with a non-reserved public suffix. Domains such as
+    # ".local" are rejected by email-validator and caused request-time 500s.
+    email = admin_user.email or f"user-{admin_user.id}@users.deerflow.local.cn"
     return GatewayUser(
         id=admin_user.id,
         email=email,
