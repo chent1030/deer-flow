@@ -175,9 +175,19 @@ function Invoke-BackendSetup($RepoRoot, $LogsDir) {
     $env:PYTHONUTF8 = "1"
     $env:PYTHONIOENCODING = "utf-8"
     $env:PYTHONPATH = "."
-    uv run python -X utf8 -m alembic upgrade head *> $migrationLog
+
+    $migrationOutput = & uv run python -X utf8 -m alembic upgrade head 2>&1
+    $migrationExitCode = $LASTEXITCODE
+    $migrationOutput | Set-Content -Path $migrationLog -Encoding UTF8
+    if ($migrationExitCode -ne 0) {
+      throw "Alembic exited with code $migrationExitCode"
+    }
+
     Write-Host "OK backend database migrations applied"
   } catch {
+    Write-Host ""
+    Write-Host "Backend database migration failed while using config: $configPath"
+    Write-Host "PowerShell error: $($_.Exception.Message)"
     if (Test-Path $migrationLog) {
       Write-Host ""
       Write-Host "Backend database migration log:"
