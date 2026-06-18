@@ -163,6 +163,7 @@ function Start-DeerFlowProcess($Name, $WorkingDirectory, $Command, $LogPath, $Pi
 function Invoke-BackendSetup($RepoRoot, $LogsDir) {
   $backendDir = Join-Path $RepoRoot "backend"
   $migrationLog = Join-Path $LogsDir "migration.log"
+  $configPath = if ($env:DEER_FLOW_CONFIG_PATH) { $env:DEER_FLOW_CONFIG_PATH } else { Join-Path $RepoRoot "config.yaml" }
   if (Test-Path $migrationLog) {
     Remove-Item $migrationLog -Force
   }
@@ -170,12 +171,19 @@ function Invoke-BackendSetup($RepoRoot, $LogsDir) {
   Write-Host "Applying backend database migrations..."
   Push-Location $backendDir
   try {
+    $env:DEER_FLOW_CONFIG_PATH = $configPath
     $env:PYTHONUTF8 = "1"
     $env:PYTHONIOENCODING = "utf-8"
     $env:PYTHONPATH = "."
     uv run python -X utf8 -m alembic upgrade head *> $migrationLog
     Write-Host "OK backend database migrations applied"
   } catch {
+    if (Test-Path $migrationLog) {
+      Write-Host ""
+      Write-Host "Backend database migration log:"
+      Get-Content -Path $migrationLog -Tail 120 | ForEach-Object { Write-Host $_ }
+      Write-Host ""
+    }
     throw "Backend database migration failed. Check log: $migrationLog"
   } finally {
     Pop-Location
