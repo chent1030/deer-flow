@@ -1,4 +1,5 @@
 import asyncio
+from typing import Any
 from logging.config import fileConfig
 
 from sqlalchemy import pool
@@ -6,6 +7,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
+from app.admin.config import AdminConfig
 from app.admin.models import Base
 from deerflow.config import get_app_config
 
@@ -16,8 +18,17 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 
+def get_admin_config() -> AdminConfig:
+    admin_config: Any = get_app_config().admin
+    if isinstance(admin_config, AdminConfig):
+        return admin_config
+    if isinstance(admin_config, dict):
+        return AdminConfig.model_validate(admin_config)
+    return AdminConfig.model_validate(admin_config.model_dump())
+
+
 def get_url():
-    return get_app_config().admin.database_url
+    return get_admin_config().database_url
 
 
 def run_migrations_offline() -> None:
