@@ -160,11 +160,35 @@ function Start-DeerFlowProcess($Name, $WorkingDirectory, $Command, $LogPath, $Pi
   return $process
 }
 
+function Invoke-BackendSetup($RepoRoot, $LogsDir) {
+  $backendDir = Join-Path $RepoRoot "backend"
+  $migrationLog = Join-Path $LogsDir "migration.log"
+  if (Test-Path $migrationLog) {
+    Remove-Item $migrationLog -Force
+  }
+
+  Write-Host "Applying backend database migrations..."
+  Push-Location $backendDir
+  try {
+    $env:PYTHONUTF8 = "1"
+    $env:PYTHONIOENCODING = "utf-8"
+    $env:PYTHONPATH = "."
+    uv run python -X utf8 -m alembic upgrade head *> $migrationLog
+    Write-Host "OK backend database migrations applied"
+  } catch {
+    throw "Backend database migration failed. Check log: $migrationLog"
+  } finally {
+    Pop-Location
+  }
+}
+
 $repoRoot = Get-RepoRoot
 Set-Location $repoRoot
 
 $env:UV_CACHE_DIR = Join-Path $repoRoot ".uv-cache"
 $env:NEXT_TELEMETRY_DISABLED = "1"
+$env:PYTHONUTF8 = "1"
+$env:PYTHONIOENCODING = "utf-8"
 
 $logsDir = Join-Path $repoRoot "logs"
 New-Item -ItemType Directory -Force -Path $logsDir | Out-Null
@@ -220,9 +244,10 @@ if (-not $SkipFrontendBuild) {
 
 Ensure-FrontendBuild $repoRoot
 Ensure-AdminBuild $repoRoot
+Invoke-BackendSetup $repoRoot $logsDir
 
 $langgraphArgs = @(
-  "uv run python start_langgraph.py --no-browser --no-reload",
+  "uv run --extra postgres python -X utf8 start_langgraph.py --no-browser --no-reload",
   "--n-jobs-per-worker $LangGraphJobsPerWorker",
   "--host 0.0.0.0",
   "--server-log-level $LangGraphLogLevel"
@@ -232,8 +257,8 @@ $isolatedLoopsValue = if ($LangGraphIsolatedLoops) { "true" } else { "false" }
 if ($AllowBlocking) {
   $langgraphArgs += "--allow-blocking"
 }
-$langgraphCmd = "`$env:NO_COLOR='1'; `$env:PYTHONPATH='.'; `$env:LANGGRAPH_ALLOW_BLOCKING='$allowBlockingValue'; `$env:BG_JOB_ISOLATED_LOOPS='$isolatedLoopsValue'; " + ($langgraphArgs -join " ")
-$gatewayCmd = "`$env:PYTHONPATH='.'; uv run python start_gateway.py"
+$langgraphCmd = "`$env:NO_COLOR='1'; `$env:PYTHONUTF8='1'; `$env:PYTHONIOENCODING='utf-8'; `$env:PYTHONPATH='.'; `$env:LANGGRAPH_ALLOW_BLOCKING='$allowBlockingValue'; `$env:BG_JOB_ISOLATED_LOOPS='$isolatedLoopsValue'; " + ($langgraphArgs -join " ")
+$gatewayCmd = "`$env:PYTHONUTF8='1'; `$env:PYTHONIOENCODING='utf-8'; `$env:PYTHONPATH='.'; uv run python -X utf8 start_gateway.py"
 $frontendCmd = "pnpm start"
 $adminCmd = "pnpm preview --host 0.0.0.0 --port 3002"
 $nginxConf = Join-Path $repoRoot "docker\nginx\nginx.local.conf"
