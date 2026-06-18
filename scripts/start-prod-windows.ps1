@@ -176,8 +176,15 @@ function Invoke-BackendSetup($RepoRoot, $LogsDir) {
     $env:PYTHONIOENCODING = "utf-8"
     $env:PYTHONPATH = "."
 
-    $migrationOutput = & uv run python -X utf8 -m alembic upgrade head 2>&1
-    $migrationExitCode = $LASTEXITCODE
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+      $ErrorActionPreference = "Continue"
+      $migrationOutput = & uv run python -X utf8 -m alembic upgrade head 2>&1
+      $migrationExitCode = $LASTEXITCODE
+    } finally {
+      $ErrorActionPreference = $previousErrorActionPreference
+    }
+
     $migrationOutput | Set-Content -Path $migrationLog -Encoding UTF8
     if ($migrationExitCode -ne 0) {
       throw "Alembic exited with code $migrationExitCode"
