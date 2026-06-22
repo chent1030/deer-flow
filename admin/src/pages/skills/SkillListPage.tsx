@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Table, Button, Tabs, Space, Tag, Popconfirm, message, Select, Modal, TreeSelect } from 'antd';
+import { Table, Button, Tabs, Space, Tag, Popconfirm, message, Select, Modal, TreeSelect, Tooltip, Typography } from 'antd';
 import { PlusOutlined, DownloadOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useSkills, useSubmitSkill, useWithdrawSkill, useDeleteSkill, useSetVisibility } from '../../hooks/useSkills';
@@ -165,6 +165,25 @@ export default function SkillListPage({ showReview = false }: SkillListPageProps
       key: 'status',
       width: 120,
       render: (status: string) => <Tag color={statusColors[status]}>{statusLabels[status] || status}</Tag>,
+    },
+    {
+      title: '审核意见',
+      dataIndex: 'review_comment',
+      key: 'review_comment',
+      width: 220,
+      render: (comment: string | null) => {
+        const text = comment?.trim();
+        if (!text) {
+          return <Typography.Text type="secondary">-</Typography.Text>;
+        }
+        return (
+          <Tooltip title={text}>
+            <Typography.Text ellipsis style={{ display: 'inline-block', maxWidth: 200 }}>
+              {text}
+            </Typography.Text>
+          </Tooltip>
+        );
+      },
     },
     { title: '大小', dataIndex: 'file_size', key: 'file_size', width: 80, render: (size: number) => `${(size / 1024).toFixed(1)} KB` },
     {

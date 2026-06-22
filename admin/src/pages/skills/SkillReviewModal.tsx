@@ -59,8 +59,10 @@ export default function SkillReviewModal({ skill, open, onClose }: SkillReviewMo
 
   const handleAutoReview = async () => {
     try {
-      await autoReviewMut.mutateAsync({ id: skill.id, reviewSkillName });
-      message.success('自动审核已完成');
+      const reviewedSkill = await autoReviewMut.mutateAsync({ id: skill.id, reviewSkillName });
+      const reviewComment = reviewedSkill.review_comment?.trim();
+      const resultLabel = reviewedSkill.status === 'rejected' ? '已驳回' : reviewedSkill.status === 'approved' ? '已通过' : '已完成';
+      message.success(reviewComment ? `自动审核${resultLabel}：${reviewComment}` : `自动审核${resultLabel}`);
       onClose();
       setComment('');
       setAction('approve');

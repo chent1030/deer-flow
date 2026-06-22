@@ -394,6 +394,47 @@ async def test_auto_review_skill(client, auth_headers, seed_data, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_auto_review_reject_skill_returns_comment(client, auth_headers, seed_data, monkeypatch):
+    upload_resp = await client.post(
+        "/api/admin/skills",
+        headers=auth_headers["regular_user"],
+        data={"name": "auto-reject-skill", "version": "1.0.0"},
+        files={"file": ("skill.zip", _make_zip_bytes(), "application/zip")},
+    )
+    skill_id = upload_resp.json()["id"]
+
+    class FakeClient:
+        def __init__(
+            self,
+            *,
+            available_skills=None,
+            plan_mode=False,
+            thinking_enabled=True,
+        ):
+            self.available_skills = available_skills
+            self.plan_mode = plan_mode
+            self.thinking_enabled = thinking_enabled
+
+        def chat(self, message, thread_id=None):
+            assert self.available_skills == {"skill-reviewer"}
+            assert "auto-reject-skill" in message
+            return '{"action":"reject","comment":"缺少 SKILL.md 中的安全说明"}'
+
+    monkeypatch.setattr("app.admin.routers.skills.DeerFlowClient", FakeClient)
+
+    resp = await client.post(
+        f"/api/admin/skills/{skill_id}/auto-review",
+        headers=auth_headers["super_admin"],
+        json={"review_skill_name": "skill-reviewer"},
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "rejected"
+    assert data["review_comment"] == "缺少 SKILL.md 中的安全说明"
+
+
+@pytest.mark.asyncio
 async def test_review_by_non_admin_forbidden(client, auth_headers, seed_data):
     upload_resp = await client.post(
         "/api/admin/skills",
