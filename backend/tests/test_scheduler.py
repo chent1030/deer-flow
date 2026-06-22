@@ -1,11 +1,18 @@
 from datetime import timedelta, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.dialects import postgresql
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from app.admin.auth.password import hash_password
+from app.admin.models import Base
 from app.admin.models.scheduled_task import ExecutionStatus, ScheduledTask, TaskExecution, TaskStatus
+from app.admin.models.user import User, UserRole, UserStatus
 from app.gateway.routers.scheduler import TaskCreateRequest
+from deerflow.scheduler.executor import TaskExecutor
 from deerflow.scheduler.manager import SchedulerManager
 from deerflow.scheduler.template_engine import render_template
 
@@ -92,6 +99,87 @@ def test_scheduler_status_enums_bind_database_values():
 
     assert task_processor(TaskStatus.ACTIVE) == "active"
     assert execution_processor(ExecutionStatus.RUNNING) == "running"
+
+
+@pytest.mark.asyncio
+async def test_task_executor_loads_scheduled_agent_by_user_id(monkeypatch):
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with session_factory() as session:
+        user = User(
+            username="schedule-user",
+            password_hash=hash_password("UserPass123!"),
+            display_name="Schedule User",
+            email="schedule@example.com",
+            role=UserRole.USER,
+            status=UserStatus.ACTIVE,
+        )
+        session.add(user)
+        await session.flush()
+        task = ScheduledTask(
+            user_id=user.id,
+            agent_name="sched-test",
+            agent_description="daily report",
+            agent_soul="Hello {{user_name}}",
+            cron_expression="0 9 * * *",
+            custom_variables={},
+            status=TaskStatus.ACTIVE,
+        )
+        session.add(task)
+        await session.commit()
+        task_id = str(task.id)
+        user_id = str(user.id)
+
+    captured: dict[str, str | None] = {}
+
+    def fake_load_agent_config(name: str, *, user_id: str | None = None):
+        captured["agent_name"] = name
+        captured["user_id"] = user_id
+        return SimpleNamespace(model=None)
+
+    async def fake_list_visible_skills(db, requested_user_id, role, department_id):
+        captured["visible_user_id"] = str(requested_user_id)
+        return ["visible-skill"]
+
+    class FakeThreads:
+        async def create(self):
+            return {"thread_id": "thread-1"}
+
+        async def get_state(self, thread_id):
+            return {"values": {"messages": []}}
+
+    class FakeRuns:
+        async def wait(self, **kwargs):
+            captured["config_user"] = kwargs["config"]["configurable"]["username"]
+            captured["config_skills"] = ",".join(kwargs["config"]["configurable"]["visible_skills"])
+            return SimpleNamespace()
+
+    class FakeClient:
+        threads = FakeThreads()
+        runs = FakeRuns()
+
+    monkeypatch.setattr("deerflow.scheduler.executor.load_agent_config", fake_load_agent_config)
+    monkeypatch.setattr("deerflow.scheduler.executor.list_visible_skills_for_user", fake_list_visible_skills)
+    monkeypatch.setattr("deerflow.scheduler.executor.get_client", lambda url: FakeClient())
+
+    executor = TaskExecutor(session_factory)
+    await executor.execute_task(task_id)
+
+    assert captured["agent_name"] == "sched-test"
+    assert captured["user_id"] == user_id
+    assert captured["visible_user_id"] == user_id
+    assert captured["config_user"] == "schedule-user"
+    assert captured["config_skills"] == "visible-skill"
+
+    async with session_factory() as session:
+        result = await session.execute(select(TaskExecution).where(TaskExecution.task_id == task.id))
+        execution = result.scalar_one()
+        assert execution.status == ExecutionStatus.COMPLETED
+
+    await engine.dispose()
 
 
 class TestSchedulerManager:

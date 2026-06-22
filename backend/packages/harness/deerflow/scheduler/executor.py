@@ -72,18 +72,17 @@ class TaskExecutor:
 
             async with self._session_factory() as db:
                 user = await db.get(User, task.user_id)
+                visible_skills = await list_visible_skills_for_user(
+                    db,
+                    task.user_id,
+                    user.role if user else "user",
+                    user.department_id if user else None,
+                )
             custom_vars = task.custom_variables or {}
             user_name = user.username if user else "unknown"
             rendered_prompt = render_template(task.agent_soul, custom_vars, user_name)
 
-            visible_skills = await list_visible_skills_for_user(
-                db,
-                task.user_id,
-                user.role if user else "user",
-                user.department_id if user else None,
-            )
-
-            agent_cfg = load_agent_config(task.agent_name, username=user_name if user else None)
+            agent_cfg = load_agent_config(task.agent_name, user_id=str(task.user_id))
             agent_model = agent_cfg.model if agent_cfg else None
 
             client = get_client(url=self._langgraph_url)
