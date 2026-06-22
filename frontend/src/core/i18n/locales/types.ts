@@ -327,7 +327,6 @@ export interface Translations {
       skills: string;
       notification: string;
       scheduler: string;
-      about: string;
     };
     memory: {
       title: string;

@@ -37,8 +37,7 @@ type SettingsSection =
   | "tools"
   | "skills"
   | "notification"
-  | "scheduler"
-  | "about";
+  | "scheduler";
 
 type SettingsDialogProps = React.ComponentProps<typeof Dialog> & {
   defaultSection?: SettingsSection;
@@ -83,7 +82,6 @@ export function SettingsDialog(props: SettingsDialogProps) {
       { id: "tools", label: t.settings.sections.tools, icon: WrenchIcon },
       { id: "skills", label: t.settings.sections.skills, icon: SparklesIcon },
       { id: "scheduler", label: t.settings.sections.scheduler, icon: ClockIcon },
-      { id: "about", label: t.settings.sections.about, icon: InfoIcon },
     ],
     [
       t.settings.sections.account,
@@ -93,7 +91,6 @@ export function SettingsDialog(props: SettingsDialogProps) {
       t.settings.sections.skills,
       t.settings.sections.scheduler,
       t.settings.sections.notification,
-      t.settings.sections.about,
     ],
   );
   return (
