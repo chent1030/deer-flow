@@ -3,13 +3,18 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Socket } from 'node:net'
-import type { ProxyOptions } from 'vite'
+import type { Plugin, PreviewServer, ProxyOptions, ViteDevServer } from 'vite'
 
 const socketErrorHandled = Symbol('adminProxySocketErrorHandled')
+const processErrorHandled = Symbol.for('deerflow.admin.processSocketErrorHandled')
 const resetLikeErrorCodes = new Set(['ECONNRESET', 'EPIPE', 'ECONNREFUSED', 'ETIMEDOUT'])
 
 type SocketWithErrorHandlerFlag = Socket & {
   [socketErrorHandled]?: true
+}
+
+type ProcessWithErrorHandlerFlag = NodeJS.Process & {
+  [processErrorHandled]?: true
 }
 
 function getErrorCode(error: unknown): string | undefined {
@@ -40,6 +45,46 @@ function attachSocketErrorHandler(socket: Socket | null | undefined): void {
     }
     console.error('[admin:vite-proxy] socket error', error)
   })
+}
+
+function installProcessSocketErrorGuard(): void {
+  const guardedProcess = process as ProcessWithErrorHandlerFlag
+  if (guardedProcess[processErrorHandled]) {
+    return
+  }
+  guardedProcess[processErrorHandled] = true
+  process.on('uncaughtException', (error) => {
+    if (isResetLikeNetworkError(error)) {
+      console.warn('[admin:vite] ignored transient socket error', getErrorCode(error))
+      return
+    }
+    throw error
+  })
+}
+
+function attachHttpServerSocketErrorHandlers(server: ViteDevServer | PreviewServer): void {
+  installProcessSocketErrorGuard()
+  const httpServer = server.httpServer
+  if (!httpServer) {
+    return
+  }
+  httpServer.on('connection', (socket) => {
+    attachSocketErrorHandler(socket)
+  })
+  httpServer.on('clientError', (error, socket) => {
+    if (!isResetLikeNetworkError(error)) {
+      console.error('[admin:vite] client error', error)
+    }
+    socket.destroy()
+  })
+}
+
+function adminSocketErrorGuard(): Plugin {
+  return {
+    name: 'admin-socket-error-guard',
+    configureServer: attachHttpServerSocketErrorHandlers,
+    configurePreviewServer: attachHttpServerSocketErrorHandlers,
+  }
 }
 
 function sendProxyFailure(res: unknown): void {
@@ -86,6 +131,7 @@ const apiProxy: Record<string, ProxyOptions> = {
 export default defineConfig({
   base: '/admin/',
   plugins: [
+    adminSocketErrorGuard(),
     react(),
     tailwindcss(),
   ],

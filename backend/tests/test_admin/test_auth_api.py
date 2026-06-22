@@ -156,6 +156,69 @@ async def test_regular_admin_session_cookie_can_use_gateway_thread_search(seed_d
 
 
 @pytest.mark.asyncio
+async def test_regular_admin_session_backfills_legacy_clerk_threads(seed_data, db_session):
+    from fastapi import FastAPI
+    from httpx import ASGITransport, AsyncClient
+    from langgraph.store.memory import InMemoryStore
+
+    from app.admin.auth.jwt import create_access_token
+    from app.admin.models.thread import Thread
+    from app.gateway.auth_middleware import AuthMiddleware
+    from app.gateway.routers import threads
+    from deerflow.persistence.thread_meta.memory import MemoryThreadMetaStore
+
+    class _SessionContext:
+        def __init__(self, session):
+            self.session = session
+
+        async def __aenter__(self):
+            return self.session
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    legacy_thread = Thread(
+        id="11111111-1111-4111-8111-111111111111",
+        user_id=seed_data["regular_user"].id,
+        title="旧聊天标题",
+        status="active",
+        message_count=2,
+    )
+    db_session.add(legacy_thread)
+    await db_session.flush()
+
+    token = create_access_token(
+        seed_data["regular_user"].id,
+        seed_data["regular_user"].username,
+        seed_data["regular_user"].role.value,
+        seed_data["regular_user"].department_id,
+        "default",
+        TEST_JWT_CONFIG,
+    )
+
+    app = FastAPI()
+    app.add_middleware(AuthMiddleware)
+    app.state.admin_session_factory = lambda: _SessionContext(db_session)
+    app.state.thread_store = MemoryThreadMetaStore(InMemoryStore())
+    app.include_router(threads.router)
+
+    mock_config = MagicMock()
+    mock_config.admin = TEST_ADMIN_CONFIG
+
+    with patch("app.admin.deps.get_app_config", return_value=mock_config):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            c.cookies.set("access_token", token)
+
+            search = await c.post("/api/threads/search", json={"limit": 10})
+            assert search.status_code == 200, search.text
+            data = search.json()
+            assert [item["thread_id"] for item in data] == [legacy_thread.id]
+            assert data[0]["values"] == {"title": "旧聊天标题"}
+            assert data[0]["metadata"] == {"legacy_admin_thread": True}
+
+
+@pytest.mark.asyncio
 async def test_login_wrong_password(client, seed_data):
     resp = await client.post(
         "/api/admin/auth/login",

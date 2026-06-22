@@ -184,6 +184,43 @@ def test_make_lead_agent_empty_skills_passed_correctly(monkeypatch):
     assert captured_skills[-1] == {"skill1"}
 
 
+def test_make_lead_agent_intersects_agent_and_visible_skills(monkeypatch):
+    from unittest.mock import MagicMock
+
+    from deerflow.agents.lead_agent import agent as lead_agent_module
+
+    monkeypatch.setattr(lead_agent_module, "_resolve_model_name", lambda x=None, **kwargs: "default-model")
+    monkeypatch.setattr(lead_agent_module, "create_chat_model", lambda **kwargs: "model")
+    monkeypatch.setattr("deerflow.tools.get_available_tools", lambda **kwargs: [])
+    monkeypatch.setattr(lead_agent_module, "_load_enabled_skills_for_tool_policy", lambda available_skills, *, app_config: [])
+    monkeypatch.setattr(lead_agent_module, "build_middlewares", lambda *args, **kwargs: [])
+    monkeypatch.setattr(lead_agent_module, "create_agent", lambda **kwargs: kwargs)
+    monkeypatch.setattr(lead_agent_module, "load_agent_config", lambda x: AgentConfig(name="test", skills=["allowed", "hidden"]))
+
+    mock_app_config = MagicMock()
+    mock_app_config.get_model_config.return_value = SimpleNamespace(supports_thinking=False, supports_vision=False)
+    monkeypatch.setattr(lead_agent_module, "get_app_config", lambda: mock_app_config)
+
+    captured_skills = []
+
+    def mock_apply_prompt_template(**kwargs):
+        captured_skills.append(kwargs.get("available_skills"))
+        return "mock_prompt"
+
+    monkeypatch.setattr(lead_agent_module, "apply_prompt_template", mock_apply_prompt_template)
+
+    lead_agent_module.make_lead_agent(
+        {
+            "configurable": {
+                "agent_name": "test",
+                "visible_skills": ["allowed"],
+            }
+        }
+    )
+
+    assert captured_skills[-1] == {"allowed"}
+
+
 def test_make_lead_agent_filters_tools_from_available_skills(monkeypatch):
     from unittest.mock import MagicMock
 

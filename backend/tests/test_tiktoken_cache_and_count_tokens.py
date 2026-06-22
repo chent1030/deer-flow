@@ -13,6 +13,7 @@ from unittest import mock
 
 from deerflow.agents.memory.prompt import (
     _count_tokens,
+    _tiktoken_failed_encodings,
     _get_tiktoken_encoding,
     _tiktoken_encoding_cache,
     warm_tiktoken_cache,
@@ -64,12 +65,29 @@ class TestGetTiktokenEncoding:
 
     def test_returns_none_and_warns_on_get_encoding_failure(self, monkeypatch):
         _tiktoken_encoding_cache.pop("bogus_encoding", None)
+        _tiktoken_failed_encodings.discard("bogus_encoding")
         import tiktoken
 
         monkeypatch.setattr(tiktoken, "get_encoding", mock.Mock(side_effect=OSError("download failed")))
         result = _get_tiktoken_encoding("bogus_encoding")
         assert result is None
         assert "bogus_encoding" not in _tiktoken_encoding_cache
+
+    def test_caches_failed_encoding_without_retrying_or_logging_traceback(self, monkeypatch, caplog):
+        _tiktoken_encoding_cache.pop("blocked_encoding", None)
+        _tiktoken_failed_encodings.discard("blocked_encoding")
+        import tiktoken
+
+        get_encoding = mock.Mock(side_effect=OSError("download failed"))
+        monkeypatch.setattr(tiktoken, "get_encoding", get_encoding)
+
+        with caplog.at_level("WARNING", logger="deerflow.agents.memory.prompt"):
+            assert _get_tiktoken_encoding("blocked_encoding") is None
+            assert _get_tiktoken_encoding("blocked_encoding") is None
+
+        assert get_encoding.call_count == 1
+        assert "blocked_encoding" in _tiktoken_failed_encodings
+        assert not any(record.exc_info for record in caplog.records)
 
 
 # ---------------------------------------------------------------------------

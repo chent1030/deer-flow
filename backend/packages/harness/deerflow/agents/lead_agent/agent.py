@@ -387,6 +387,22 @@ def _available_skill_names(agent_config, is_bootstrap: bool) -> set[str] | None:
     return None
 
 
+def _resolve_available_skills(agent_config, is_bootstrap: bool, visible_skills: object | None) -> set[str] | None:
+    agent_skills = _available_skill_names(agent_config, is_bootstrap)
+    if is_bootstrap:
+        return agent_skills
+    if visible_skills is None:
+        return agent_skills
+    if isinstance(visible_skills, (set, list, tuple)):
+        user_visible = {str(name) for name in visible_skills}
+    else:
+        logger.warning("Ignoring invalid visible_skills runtime value: %r", visible_skills)
+        return agent_skills
+    if agent_skills is None:
+        return user_visible
+    return agent_skills & user_visible
+
+
 def _load_enabled_skills_for_tool_policy(available_skills: set[str] | None, *, app_config: AppConfig) -> list[Skill]:
     try:
         from deerflow.agents.lead_agent.prompt import get_enabled_skills_for_config
@@ -427,7 +443,7 @@ def _make_lead_agent(config: RunnableConfig, *, app_config: AppConfig):
     agent_name = validate_agent_name(cfg.get("agent_name"))
 
     agent_config = load_agent_config(agent_name) if not is_bootstrap else None
-    available_skills = _available_skill_names(agent_config, is_bootstrap)
+    available_skills = _resolve_available_skills(agent_config, is_bootstrap, cfg.get("visible_skills"))
     # Custom agent model from agent config (if any), or None to let _resolve_model_name pick the default
     agent_model_name = agent_config.model if agent_config and agent_config.model else None
 

@@ -170,6 +170,7 @@ Return ONLY valid JSON."""
 # startup via :func:`warm_tiktoken_cache` avoids blocking a request on the
 # (potentially slow) first ``get_encoding`` call.
 _tiktoken_encoding_cache: dict[str, tiktoken.Encoding] = {}
+_tiktoken_failed_encodings: set[str] = set()
 
 
 def _get_tiktoken_encoding(encoding_name: str = "cl100k_base") -> tiktoken.Encoding | None:
@@ -188,13 +189,20 @@ def _get_tiktoken_encoding(encoding_name: str = "cl100k_base") -> tiktoken.Encod
     cached = _tiktoken_encoding_cache.get(encoding_name)
     if cached is not None:
         return cached
+    if encoding_name in _tiktoken_failed_encodings:
+        return None
 
     try:
         encoding = tiktoken.get_encoding(encoding_name)
         _tiktoken_encoding_cache[encoding_name] = encoding
         return encoding
-    except Exception:
-        logger.warning("Failed to load tiktoken encoding %r; falling back to char-based estimation", encoding_name, exc_info=True)
+    except Exception as exc:
+        _tiktoken_failed_encodings.add(encoding_name)
+        logger.warning(
+            "Failed to load tiktoken encoding %r; falling back to char-based estimation: %s",
+            encoding_name,
+            exc,
+        )
         return None
 
 

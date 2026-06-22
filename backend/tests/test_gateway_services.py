@@ -252,6 +252,24 @@ def test_build_run_config_context_custom_agent_injects_agent_name():
     assert "configurable" not in config
 
 
+def test_merge_run_context_overrides_preserves_visible_skills():
+    from app.gateway.services import merge_run_context_overrides
+
+    config = {"configurable": {}, "context": {}}
+    merge_run_context_overrides(
+        config,
+        {
+            "visible_skills": ["visible-skill"],
+            "unknown": ["hidden-skill"],
+        },
+    )
+
+    assert config["configurable"]["visible_skills"] == ["visible-skill"]
+    assert config["context"]["visible_skills"] == ["visible-skill"]
+    assert "unknown" not in config["configurable"]
+    assert "unknown" not in config["context"]
+
+
 def test_resolve_agent_factory_returns_make_lead_agent():
     """resolve_agent_factory always returns make_lead_agent regardless of assistant_id."""
     from app.gateway.services import resolve_agent_factory

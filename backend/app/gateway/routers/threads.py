@@ -19,13 +19,15 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from langgraph.checkpoint.base import empty_checkpoint, uuid6
 from pydantic import BaseModel, Field, field_validator
+from sqlalchemy import select
 
+from app.admin.models.thread import Thread as AdminThread
 from app.gateway.authz import require_permission
 from app.gateway.deps import get_checkpointer
 from app.gateway.utils import sanitize_log_param
 from deerflow.config.paths import Paths, get_paths
 from deerflow.runtime import serialize_channel_values
-from deerflow.runtime.user_context import get_effective_user_id
+from deerflow.runtime.user_context import get_current_user, get_effective_user_id
 from deerflow.utils.time import coerce_iso, now_iso
 
 logger = logging.getLogger(__name__)
@@ -204,6 +206,47 @@ def _derive_thread_status(checkpoint_tuple) -> str:
     return "idle"
 
 
+async def _backfill_legacy_admin_threads_for_current_user(request: Request, limit: int) -> None:
+    """Backfill old Clerk-era admin thread rows into ``threads_meta``.
+
+    The Clerk migration stored chat ownership in the admin ``threads`` table.
+    The current user-facing workspace lists from ``threads_meta``. Without this
+    lazy bridge, existing users can log in successfully but their old chat list
+    appears empty until a one-off migration is run.
+    """
+    current_user = get_current_user()
+    user_id = getattr(current_user, "id", None)
+    if user_id is None:
+        return
+
+    session_factory = getattr(request.app.state, "admin_session_factory", None)
+    if session_factory is None:
+        return
+
+    from app.gateway.deps import get_thread_store
+
+    thread_store = get_thread_store(request)
+    async with session_factory() as session:
+        result = await session.execute(
+            select(AdminThread)
+            .where(AdminThread.user_id == user_id, AdminThread.status != "deleted")
+            .order_by(AdminThread.updated_at.desc())
+            .limit(limit)
+        )
+        legacy_threads = list(result.scalars())
+
+    for legacy in legacy_threads:
+        existing = await thread_store.get(legacy.id)
+        if existing is not None:
+            continue
+        await thread_store.create(
+            legacy.id,
+            user_id=str(user_id),
+            display_name=legacy.title,
+            metadata={"legacy_admin_thread": True},
+        )
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -319,6 +362,14 @@ async def search_threads(body: ThreadSearchRequest, request: Request) -> list[Th
     from deerflow.persistence.thread_meta import InvalidMetadataFilterError
 
     repo = get_thread_store(request)
+    try:
+        await _backfill_legacy_admin_threads_for_current_user(
+            request,
+            limit=max(body.limit + body.offset, body.limit, 100),
+        )
+    except Exception:
+        logger.warning("Failed to backfill legacy admin threads for current user", exc_info=True)
+
     try:
         rows = await repo.search(
             metadata=body.metadata or None,
