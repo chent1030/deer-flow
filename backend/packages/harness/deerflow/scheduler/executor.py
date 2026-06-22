@@ -22,6 +22,16 @@ def _now_iso() -> str:
     return datetime.now(UTC8).isoformat()
 
 
+def _load_scheduled_agent_config(agent_name: str, *, user_id: str, username: str | None):
+    try:
+        return load_agent_config(agent_name, user_id=user_id)
+    except FileNotFoundError:
+        if username and username != user_id:
+            logger.warning("Scheduled agent %s not found under user_id %s; trying legacy username path %s", agent_name, user_id, username)
+            return load_agent_config(agent_name, user_id=username)
+        raise
+
+
 class TaskExecutor:
     def __init__(
         self,
@@ -82,7 +92,11 @@ class TaskExecutor:
             user_name = user.username if user else "unknown"
             rendered_prompt = render_template(task.agent_soul, custom_vars, user_name)
 
-            agent_cfg = load_agent_config(task.agent_name, user_id=str(task.user_id))
+            agent_cfg = _load_scheduled_agent_config(
+                task.agent_name,
+                user_id=str(task.user_id),
+                username=user_name if user else None,
+            )
             agent_model = agent_cfg.model if agent_cfg else None
 
             client = get_client(url=self._langgraph_url)

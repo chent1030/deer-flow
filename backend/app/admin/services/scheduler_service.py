@@ -23,6 +23,43 @@ def _now_iso() -> str:
     return datetime.now(UTC8).isoformat()
 
 
+def _agent_dir_for_user_id(user_id: uuid.UUID, agent_name: str):
+    return get_paths().user_agent_dir(str(user_id), agent_name)
+
+
+def _legacy_agent_dir_for_username(user: User | None, user_id: uuid.UUID, agent_name: str):
+    if user is None or user.username == str(user_id):
+        return None
+    return get_paths().user_agent_dir(user.username, agent_name)
+
+
+def _resolve_existing_agent_dir(user: User | None, user_id: uuid.UUID, agent_name: str):
+    primary = _agent_dir_for_user_id(user_id, agent_name)
+    if primary.exists():
+        return primary
+    legacy = _legacy_agent_dir_for_username(user, user_id, agent_name)
+    if legacy is not None and legacy.exists():
+        return legacy
+    return primary
+
+
+def _remove_agent_dir(agent_dir) -> None:
+    if not agent_dir.exists():
+        return
+    import platform
+
+    if platform.system() == "Windows":
+        import stat
+
+        def _make_writable(func, path, _exc_info):
+            os.chmod(path, stat.S_IWRITE)
+            func(path)
+
+        shutil.rmtree(agent_dir, onexc=_make_writable)
+    else:
+        shutil.rmtree(agent_dir)
+
+
 async def create_task(
     db: AsyncSession,
     user_id: uuid.UUID,
@@ -38,10 +75,8 @@ async def create_task(
 
     task_id = uuid.uuid4()
     agent_name = f"sched-{str(task_id)[:8]}"
-    user = await db.get(User, user_id)
-    username = user.username if user else str(user_id)
 
-    agent_dir = get_paths().user_agent_dir(username, agent_name)
+    agent_dir = _agent_dir_for_user_id(user_id, agent_name)
     agent_dir.mkdir(parents=True, exist_ok=True)
 
     config_data: dict = {"name": agent_name, "description": agent_description}
@@ -93,8 +128,8 @@ async def update_task(
     if agent_soul is not None:
         task.agent_soul = agent_soul
         user = await db.get(User, user_id)
-        username = user.username if user else str(user_id)
-        agent_dir = get_paths().user_agent_dir(username, task.agent_name)
+        agent_dir = _resolve_existing_agent_dir(user, user_id, task.agent_name)
+        agent_dir.mkdir(parents=True, exist_ok=True)
         soul_file = agent_dir / "SOUL.md"
         soul_file.write_text(agent_soul, encoding="utf-8")
     if skill_name is not None:
@@ -121,21 +156,12 @@ async def delete_task(db: AsyncSession, task_id: uuid.UUID, user_id: uuid.UUID) 
     SchedulerManager.get_instance().remove_task(str(task.id))
 
     user = await db.get(User, user_id)
-    username = user.username if user else str(user_id)
-    agent_dir = get_paths().user_agent_dir(username, task.agent_name)
-    if agent_dir.exists():
-        import platform
-
-        if platform.system() == "Windows":
-            import stat
-
-            def _make_writable(func, path, _exc_info):
-                os.chmod(path, stat.S_IWRITE)
-                func(path)
-
-            shutil.rmtree(agent_dir, onexc=_make_writable)
-        else:
-            shutil.rmtree(agent_dir)
+    agent_dirs = [_agent_dir_for_user_id(user_id, task.agent_name)]
+    legacy_dir = _legacy_agent_dir_for_username(user, user_id, task.agent_name)
+    if legacy_dir is not None and legacy_dir not in agent_dirs:
+        agent_dirs.append(legacy_dir)
+    for agent_dir in agent_dirs:
+        _remove_agent_dir(agent_dir)
 
     await db.delete(task)
     await db.commit()

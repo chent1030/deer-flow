@@ -1,11 +1,16 @@
 import { useState } from 'react';
-import { Modal, Descriptions, Radio, Input, Button, message, Space } from 'antd';
+import { Modal, Descriptions, Radio, Input, Button, message, Space, Alert } from 'antd';
 import { AuditOutlined, DownloadOutlined } from '@ant-design/icons';
 import { useAutoReviewSkill, useReviewSkill } from '../../hooks/useSkills';
 import { downloadSkill } from '../../api/skills';
 import type { Skill } from '../../types';
 
 const { TextArea } = Input;
+
+type AutoReviewResult = {
+  status: string;
+  comment: string;
+};
 
 function getApiErrorMessage(error: unknown, fallback: string): string {
   if (typeof error === 'object' && error !== null) {
@@ -33,8 +38,20 @@ export default function SkillReviewModal({ skill, open, onClose }: SkillReviewMo
   const [action, setAction] = useState<'approve' | 'reject'>('approve');
   const [comment, setComment] = useState('');
   const [reviewSkillName, setReviewSkillName] = useState('skill-reviewer');
+  const [autoReviewResult, setAutoReviewResult] = useState<AutoReviewResult | null>(null);
   const reviewMut = useReviewSkill();
   const autoReviewMut = useAutoReviewSkill();
+
+  const resetState = () => {
+    setComment('');
+    setAction('approve');
+    setAutoReviewResult(null);
+  };
+
+  const handleClose = () => {
+    resetState();
+    onClose();
+  };
 
   const handleDownload = async () => {
     try {
@@ -49,9 +66,7 @@ export default function SkillReviewModal({ skill, open, onClose }: SkillReviewMo
     try {
       await reviewMut.mutateAsync({ id: skill.id, action, comment });
       message.success(action === 'approve' ? 'Skill 已通过' : 'Skill 已驳回');
-      onClose();
-      setComment('');
-      setAction('approve');
+      handleClose();
     } catch (e: unknown) {
       message.error(getApiErrorMessage(e, '审核失败'));
     }
@@ -62,10 +77,10 @@ export default function SkillReviewModal({ skill, open, onClose }: SkillReviewMo
       const reviewedSkill = await autoReviewMut.mutateAsync({ id: skill.id, reviewSkillName });
       const reviewComment = reviewedSkill.review_comment?.trim();
       const resultLabel = reviewedSkill.status === 'rejected' ? '已驳回' : reviewedSkill.status === 'approved' ? '已通过' : '已完成';
+      setAction(reviewedSkill.status === 'rejected' ? 'reject' : 'approve');
+      setComment(reviewComment || '');
+      setAutoReviewResult({ status: reviewedSkill.status, comment: reviewComment || '' });
       message.success(reviewComment ? `自动审核${resultLabel}：${reviewComment}` : `自动审核${resultLabel}`);
-      onClose();
-      setComment('');
-      setAction('approve');
     } catch (e: unknown) {
       message.error(getApiErrorMessage(e, '自动审核失败'));
     }
@@ -75,7 +90,7 @@ export default function SkillReviewModal({ skill, open, onClose }: SkillReviewMo
     <Modal
       title="审核 Skill"
       open={open}
-      onCancel={onClose}
+      onCancel={handleClose}
       footer={
         <Space>
           <Button icon={<DownloadOutlined />} onClick={handleDownload}>
@@ -84,20 +99,26 @@ export default function SkillReviewModal({ skill, open, onClose }: SkillReviewMo
           <Button
             icon={<AuditOutlined />}
             loading={autoReviewMut.isPending}
-            disabled={!reviewSkillName.trim()}
+            disabled={!reviewSkillName.trim() || !!autoReviewResult}
             onClick={handleAutoReview}
           >
             自动审核
           </Button>
-          <Button onClick={onClose}>取消</Button>
-          <Button
-            type="primary"
-            loading={reviewMut.isPending}
-            danger={action === 'reject'}
-            onClick={handleSubmit}
-          >
-            {action === 'approve' ? '通过' : '驳回'}
-          </Button>
+          <Button onClick={handleClose}>取消</Button>
+          {autoReviewResult ? (
+            <Button type="primary" onClick={handleClose}>
+              关闭
+            </Button>
+          ) : (
+            <Button
+              type="primary"
+              loading={reviewMut.isPending}
+              danger={action === 'reject'}
+              onClick={handleSubmit}
+            >
+              {action === 'approve' ? '通过' : '驳回'}
+            </Button>
+          )}
         </Space>
       }
     >
@@ -108,6 +129,15 @@ export default function SkillReviewModal({ skill, open, onClose }: SkillReviewMo
         <Descriptions.Item label="作者">{skill.author_name || skill.author_id}</Descriptions.Item>
         <Descriptions.Item label="大小">{(skill.file_size / 1024).toFixed(1)} KB</Descriptions.Item>
       </Descriptions>
+      {autoReviewResult && (
+        <Alert
+          type={autoReviewResult.status === 'rejected' ? 'error' : 'success'}
+          showIcon
+          message={`自动审核${autoReviewResult.status === 'rejected' ? '已驳回' : autoReviewResult.status === 'approved' ? '已通过' : '已完成'}`}
+          description={autoReviewResult.comment || '审核 Skill 未返回具体意见'}
+          style={{ marginTop: 16 }}
+        />
+      )}
       <div style={{ marginTop: 16 }}>
         <Radio.Group value={action} onChange={(e) => setAction(e.target.value)}>
           <Radio value="approve">通过</Radio>

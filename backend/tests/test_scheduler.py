@@ -11,7 +11,10 @@ from app.admin.auth.password import hash_password
 from app.admin.models import Base
 from app.admin.models.scheduled_task import ExecutionStatus, ScheduledTask, TaskExecution, TaskStatus
 from app.admin.models.user import User, UserRole, UserStatus
+from app.admin.services import scheduler_service
 from app.gateway.routers.scheduler import TaskCreateRequest
+from deerflow.config.agents_config import load_agent_config
+from deerflow.config.paths import Paths
 from deerflow.scheduler.executor import TaskExecutor
 from deerflow.scheduler.manager import SchedulerManager
 from deerflow.scheduler.template_engine import render_template
@@ -178,6 +181,118 @@ async def test_task_executor_loads_scheduled_agent_by_user_id(monkeypatch):
         result = await session.execute(select(TaskExecution).where(TaskExecution.task_id == task.id))
         execution = result.scalar_one()
         assert execution.status == ExecutionStatus.COMPLETED
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_create_task_writes_agent_under_user_id(tmp_path, monkeypatch):
+    paths = Paths(base_dir=tmp_path)
+    monkeypatch.setattr("app.admin.services.scheduler_service.get_paths", lambda: paths)
+    monkeypatch.setattr("deerflow.config.agents_config.get_paths", lambda: paths)
+
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with session_factory() as session:
+        user = User(
+            username="schedule-user",
+            password_hash=hash_password("UserPass123!"),
+            display_name="Schedule User",
+            email="schedule@example.com",
+            role=UserRole.USER,
+            status=UserStatus.ACTIVE,
+        )
+        session.add(user)
+        await session.flush()
+        user_id = str(user.id)
+
+        task = await scheduler_service.create_task(
+            session,
+            user.id,
+            agent_description="daily report",
+            agent_soul="Hello",
+            cron_expression="0 9 * * *",
+        )
+
+    expected_dir = paths.user_agent_dir(user_id, task.agent_name)
+    legacy_dir = paths.user_agent_dir("schedule-user", task.agent_name)
+
+    assert expected_dir.exists()
+    assert not legacy_dir.exists()
+    assert load_agent_config(task.agent_name, user_id=user_id).name == task.agent_name
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_task_executor_falls_back_to_legacy_username_agent_dir(monkeypatch):
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with session_factory() as session:
+        user = User(
+            username="legacy-schedule-user",
+            password_hash=hash_password("UserPass123!"),
+            display_name="Legacy Schedule User",
+            email="legacy-schedule@example.com",
+            role=UserRole.USER,
+            status=UserStatus.ACTIVE,
+        )
+        session.add(user)
+        await session.flush()
+        task = ScheduledTask(
+            user_id=user.id,
+            agent_name="sched-legacy",
+            agent_description="daily report",
+            agent_soul="Hello {{user_name}}",
+            cron_expression="0 9 * * *",
+            custom_variables={},
+            status=TaskStatus.ACTIVE,
+        )
+        session.add(task)
+        await session.commit()
+        task_id = str(task.id)
+        user_id = str(user.id)
+
+    attempted_user_ids: list[str | None] = []
+
+    async def fake_list_visible_skills(db, requested_user_id, role, department_id):
+        return []
+
+    class FakeThreads:
+        async def create(self):
+            return {"thread_id": "thread-legacy"}
+
+        async def get_state(self, thread_id):
+            return {"values": {"messages": []}}
+
+    class FakeRuns:
+        async def wait(self, **kwargs):
+            return SimpleNamespace()
+
+    class FakeClient:
+        threads = FakeThreads()
+        runs = FakeRuns()
+
+    def fake_load_agent_config(name: str, *, user_id: str | None = None):
+        attempted_user_ids.append(user_id)
+        if user_id == attempted_user_ids[0]:
+            raise FileNotFoundError("missing user-id path")
+        return SimpleNamespace(model=None)
+
+    monkeypatch.setattr("deerflow.scheduler.executor.load_agent_config", fake_load_agent_config)
+    monkeypatch.setattr("deerflow.scheduler.executor.list_visible_skills_for_user", fake_list_visible_skills)
+    monkeypatch.setattr("deerflow.scheduler.executor.get_client", lambda url: FakeClient())
+
+    executor = TaskExecutor(session_factory)
+    await executor.execute_task(task_id)
+
+    assert attempted_user_ids == [user_id, "legacy-schedule-user"]
 
     await engine.dispose()
 
