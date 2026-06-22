@@ -14,7 +14,7 @@ from deerflow.scheduler.template_engine import render_template
 logger = logging.getLogger(__name__)
 
 UTC8 = timezone(timedelta(hours=8))
-DEFAULT_LANGGRAPH_URL = "http://localhost:2024"
+DEFAULT_LANGGRAPH_URL = "http://127.0.0.1:2024"
 EXECUTION_TIMEOUT = 600
 
 

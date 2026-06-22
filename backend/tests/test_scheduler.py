@@ -297,6 +297,68 @@ async def test_task_executor_falls_back_to_legacy_username_agent_dir(monkeypatch
     await engine.dispose()
 
 
+@pytest.mark.asyncio
+async def test_trigger_task_reuses_configured_scheduler_executor():
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with session_factory() as session:
+        user = User(
+            username="trigger-user",
+            password_hash=hash_password("UserPass123!"),
+            display_name="Trigger User",
+            email="trigger@example.com",
+            role=UserRole.USER,
+            status=UserStatus.ACTIVE,
+        )
+        session.add(user)
+        await session.flush()
+        task = ScheduledTask(
+            user_id=user.id,
+            agent_name="sched-trigger",
+            agent_description="manual trigger",
+            agent_soul="Hello",
+            cron_expression="0 9 * * *",
+            custom_variables={},
+            status=TaskStatus.ACTIVE,
+        )
+        session.add(task)
+        await session.commit()
+        task_id = task.id
+        user_id = user.id
+
+    called: list[str] = []
+
+    class FakeExecutor:
+        async def execute_task(self, task_id_str: str) -> None:
+            called.append(task_id_str)
+            async with session_factory() as session:
+                session.add(
+                    TaskExecution(
+                        task_id=task_id,
+                        status=ExecutionStatus.COMPLETED,
+                        triggered_at="2026-01-01T00:00:00+08:00",
+                        completed_at="2026-01-01T00:00:01+08:00",
+                    )
+                )
+                await session.commit()
+
+    manager = SchedulerManager.get_instance()
+    previous_executor = getattr(manager, "_executor", None)
+    manager.set_executor(FakeExecutor())
+    try:
+        async with session_factory() as session:
+            execution = await scheduler_service.trigger_task(session, task_id, user_id)
+    finally:
+        manager.set_executor(previous_executor)
+        await engine.dispose()
+
+    assert called == [str(task_id)]
+    assert execution.status == ExecutionStatus.COMPLETED
+
+
 class TestSchedulerManager:
     def test_singleton(self):
         mgr1 = SchedulerManager.get_instance()

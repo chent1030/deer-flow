@@ -10,8 +10,8 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.admin.config import AdminConfig
 from app.admin.minio import MinioClient
-from app.admin.routers import audit_threads as admin_audit_threads
 from app.admin.routers import agent_share_records as admin_agent_share_records
+from app.admin.routers import audit_threads as admin_audit_threads
 from app.admin.routers import auth as admin_auth
 from app.admin.routers import departments as admin_depts
 from app.admin.routers import skills as admin_skills
@@ -217,7 +217,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             from deerflow.scheduler.manager import SchedulerManager
 
             sched_mgr = SchedulerManager.get_instance()
-            langgraph_url = os.environ.get("DEER_FLOW_SCHEDULER_LANGGRAPH_URL", f"http://{config.host}:{config.port}")
+            langgraph_url = os.environ.get("DEER_FLOW_SCHEDULER_LANGGRAPH_URL", "http://127.0.0.1:2024")
             executor = TaskExecutor(app.state.admin_session_factory, langgraph_url=langgraph_url)
             sched_mgr.set_executor(executor)
             sched_mgr.start()

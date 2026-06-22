@@ -26,6 +26,9 @@ class SchedulerManager:
     def set_executor(self, executor) -> None:
         self._executor = executor
 
+    def get_executor(self):
+        return self._executor
+
     def start(self) -> None:
         if not self._scheduler.running:
             self._scheduler.start()

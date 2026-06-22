@@ -17,6 +17,7 @@ from deerflow.scheduler.manager import SchedulerManager
 logger = logging.getLogger(__name__)
 
 UTC8 = timezone(timedelta(hours=8))
+DEFAULT_SCHEDULER_LANGGRAPH_URL = "http://127.0.0.1:2024"
 
 
 def _now_iso() -> str:
@@ -195,8 +196,15 @@ async def trigger_task(db: AsyncSession, task_id: uuid.UUID, user_id: uuid.UUID)
 
     from deerflow.scheduler.executor import TaskExecutor
 
-    session_factory = async_sessionmaker(db.get_bind(), expire_on_commit=False)
-    executor = TaskExecutor(session_factory)
+    scheduler_manager = SchedulerManager.get_instance()
+    executor = scheduler_manager.get_executor()
+    if executor is None:
+        bind = getattr(db, "bind", None) or db.get_bind()
+        session_factory = async_sessionmaker(bind, expire_on_commit=False)
+        executor = TaskExecutor(
+            session_factory,
+            langgraph_url=os.environ.get("DEER_FLOW_SCHEDULER_LANGGRAPH_URL", DEFAULT_SCHEDULER_LANGGRAPH_URL),
+        )
     await executor.execute_task(str(task.id))
 
     result = await db.execute(
