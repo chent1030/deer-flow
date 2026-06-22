@@ -5,6 +5,7 @@ import shutil
 import uuid
 import zipfile
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response
@@ -30,6 +31,10 @@ def _get_minio_client() -> MinioClient:
 
     app = get_app()
     return app.state.minio_client
+
+
+def _build_attachment_headers(filename: str) -> dict[str, str]:
+    return {"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"}
 
 
 def _extract_skill_to_custom(skill_name: str) -> None:
@@ -310,7 +315,7 @@ async def download_skill(
     return Response(
         content=data,
         media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{skill.name}.zip"'},
+        headers=_build_attachment_headers(f"{skill.name}.zip"),
     )
 
 

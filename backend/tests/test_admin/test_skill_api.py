@@ -361,10 +361,21 @@ async def test_auto_review_skill(client, auth_headers, seed_data, monkeypatch):
     skill_id = upload_resp.json()["id"]
 
     class FakeClient:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
+        def __init__(
+            self,
+            *,
+            available_skills=None,
+            plan_mode=False,
+            thinking_enabled=True,
+        ):
+            self.available_skills = available_skills
+            self.plan_mode = plan_mode
+            self.thinking_enabled = thinking_enabled
 
         def chat(self, message, thread_id=None):
+            assert self.available_skills == {"skill-reviewer"}
+            assert self.plan_mode is False
+            assert self.thinking_enabled is True
             assert "auto-review-skill" in message
             return '{"action":"approve","comment":"自动审核通过"}'
 
@@ -525,3 +536,27 @@ async def test_download_skill(client, auth_headers, seed_data):
     assert resp.status_code == 200
     assert resp.headers["content-type"] == "application/zip"
     assert "attachment" in resp.headers.get("content-disposition", "")
+
+
+@pytest.mark.asyncio
+async def test_download_approved_skill_with_non_ascii_name(client, auth_headers, seed_data):
+    upload_resp = await client.post(
+        "/api/admin/skills",
+        headers=auth_headers["regular_user"],
+        data={"name": "中文技能", "version": "1.0.0"},
+        files={"file": ("skill.zip", _make_zip_bytes(), "application/zip")},
+    )
+    skill_id = upload_resp.json()["id"]
+
+    review_resp = await client.post(
+        f"/api/admin/skills/{skill_id}/review",
+        headers=auth_headers["super_admin"],
+        json={"action": "approve"},
+    )
+    assert review_resp.status_code == 200
+
+    resp = await client.get(f"/api/admin/skills/{skill_id}/download", headers=auth_headers["super_admin"])
+
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "application/zip"
+    assert "filename*=UTF-8" in resp.headers.get("content-disposition", "")
