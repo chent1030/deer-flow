@@ -62,11 +62,11 @@ export const zhCN: Translations = {
   welcome: {
     greeting: "你好，欢迎回来！",
     description:
-      "欢迎使用 🦌 DeerFlow，一个完全开源的超级智能体。通过内置和自定义的 Skills，\nDeerFlow 可以帮你搜索网络、分析数据，还能为你生成幻灯片、\n图片、视频、播客及网页等，几乎可以做任何事情。",
+      "欢迎使用芯工坊调度系统。通过内置和自定义的 Skills，\n可以帮你分析数据、生成幻灯片等，几乎可以做任何事情。",
 
     createYourOwnSkill: "创建你自己的 Agent SKill",
     createYourOwnSkillDescription:
-      "创建你的 Agent Skill 来释放 DeerFlow 的潜力。通过自定义技能，DeerFlow\n可以帮你搜索网络、分析数据，还能为你生成幻灯片、\n网页等作品，几乎可以做任何事情。",
+      "创建你的 Agent Skill 来释放芯工坊调度系统的潜力。通过自定义技能，芯工坊调度系统\n可以帮你分析数据等很多事情。",
   },
 
   // Clipboard
@@ -233,7 +233,6 @@ export const zhCN: Translations = {
     visitGithub: "在 Github 上查看 DeerFlow",
     reportIssue: "报告问题",
     contactUs: "联系我们",
-    about: "关于 DeerFlow",
     logout: "退出登录",
   },
 
@@ -250,7 +249,7 @@ export const zhCN: Translations = {
 
   // Page titles (document title)
   pages: {
-    appName: "DeerFlow",
+    appName: "芯工坊调度系统",
     chats: "对话",
     newChat: "新对话",
     untitled: "未命名",
