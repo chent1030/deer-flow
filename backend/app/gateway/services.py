@@ -11,7 +11,7 @@ import asyncio
 import json
 import logging
 import re
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 from fastapi import HTTPException, Request
@@ -162,6 +162,31 @@ def merge_run_context_overrides(config: dict[str, Any], context: Mapping[str, An
                 runtime_context.setdefault(key, context[key])
     if "user_id" in context and isinstance(runtime_context, dict):
         runtime_context.setdefault("user_id", context["user_id"])
+
+
+def set_authoritative_visible_skills(config: dict[str, Any], visible_skill_names: Iterable[str]) -> None:
+    visible_skills = sorted({str(name) for name in visible_skill_names})
+    wrote = False
+    for key in ("configurable", "context"):
+        target = config.get(key)
+        if isinstance(target, dict):
+            target["visible_skills"] = visible_skills
+            wrote = True
+    if not wrote:
+        config["context"] = {"visible_skills": visible_skills}
+
+
+async def apply_authoritative_visible_skills(config: dict[str, Any], request: Request) -> None:
+    """Make server-side admin visibility the source of truth for agent prompts."""
+
+    try:
+        from app.gateway.skill_visibility import load_visible_runtime_skill_names_for_request
+
+        visible_skill_names = await load_visible_runtime_skill_names_for_request(request, get_app_config())
+    except Exception:
+        logger.exception("Failed to resolve authoritative visible skills; hiding custom skills for this run")
+        visible_skill_names = []
+    set_authoritative_visible_skills(config, visible_skill_names)
 
 
 def inject_authenticated_user_context(config: dict[str, Any], request: Request) -> None:
@@ -356,6 +381,7 @@ async def start_run(
     # that carries agent configuration (model_name, thinking_enabled, etc.).
     # Only agent-relevant keys are forwarded; unknown keys (e.g. thread_id) are ignored.
     merge_run_context_overrides(config, getattr(body, "context", None))
+    await apply_authoritative_visible_skills(config, request)
     inject_authenticated_user_context(config, request)
 
     stream_modes = normalize_stream_modes(body.stream_mode)

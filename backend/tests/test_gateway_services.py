@@ -270,6 +270,20 @@ def test_merge_run_context_overrides_preserves_visible_skills():
     assert "unknown" not in config["context"]
 
 
+def test_set_authoritative_visible_skills_overrides_client_visible_skills():
+    from app.gateway.services import set_authoritative_visible_skills
+
+    config = {
+        "configurable": {"visible_skills": ["client-only"]},
+        "context": {"visible_skills": ["client-only"]},
+    }
+
+    set_authoritative_visible_skills(config, ["public-skill", "allowed-custom"])
+
+    assert config["configurable"]["visible_skills"] == ["allowed-custom", "public-skill"]
+    assert config["context"]["visible_skills"] == ["allowed-custom", "public-skill"]
+
+
 def test_resolve_agent_factory_returns_make_lead_agent():
     """resolve_agent_factory always returns make_lead_agent regardless of assistant_id."""
     from app.gateway.services import resolve_agent_factory

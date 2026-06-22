@@ -5,10 +5,12 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from app.admin.models.user import User
-from app.admin.services import skill_service as admin_skill_service
 from app.gateway.deps import get_config
 from app.gateway.path_utils import resolve_thread_virtual_path
+from app.gateway.skill_visibility import (
+    filter_visible_skills,
+    load_visible_custom_skill_names_for_request,
+)
 from deerflow.agents.lead_agent.prompt import refresh_skills_system_prompt_cache_async
 from deerflow.config.app_config import AppConfig
 from deerflow.config.extensions_config import ExtensionsConfig, SkillStateConfig, get_extensions_config, reload_extensions_config
@@ -87,33 +89,6 @@ def _skill_to_response(skill: Skill) -> SkillResponse:
     )
 
 
-async def _load_visible_skill_names_for_current_user(request: Request) -> set[str] | None:
-    auth = getattr(request.state, "auth", None)
-    if auth is None:
-        return None
-    user = auth.user
-    if user is None or user.id is None:
-        return None
-
-    from app.gateway.app import get_app
-
-    app = get_app()
-    session_factory = getattr(app.state, "admin_session_factory", None)
-    if session_factory is None:
-        return None
-    async with session_factory() as db:
-        admin_user = await db.get(User, user.id)
-        if admin_user is None:
-            return set()
-        visible_names = await admin_skill_service.list_visible_skills_for_user(
-            db,
-            admin_user.id,
-            admin_user.role.value,
-            admin_user.department_id,
-        )
-        return set(visible_names)
-
-
 def _is_admin_visible_skill(skill: Skill, visible_skill_names: set[str]) -> bool:
     if skill.category != SkillCategory.CUSTOM:
         return True
@@ -123,9 +98,7 @@ def _is_admin_visible_skill(skill: Skill, visible_skill_names: set[str]) -> bool
 async def _require_admin_visible_custom_skill(skill_name: str, request: Request, skill: Skill | None = None) -> None:
     if skill is not None and skill.category != SkillCategory.CUSTOM:
         return
-    visible_skill_names = await _load_visible_skill_names_for_current_user(request)
-    if visible_skill_names is None:
-        return
+    visible_skill_names = await load_visible_custom_skill_names_for_request(request)
     if skill_name not in visible_skill_names:
         raise HTTPException(status_code=404, detail=f"Custom skill '{skill_name}' not found")
 
@@ -138,17 +111,9 @@ async def _require_admin_visible_custom_skill(skill_name: str, request: Request,
 )
 async def list_skills(request: Request, config: AppConfig = Depends(get_config)) -> SkillsListResponse:
     try:
-        visible_skill_names = await _load_visible_skill_names_for_current_user(request)
         skills = get_or_new_skill_storage(app_config=config).load_skills(enabled_only=True)
-        if visible_skill_names is None:
-            return SkillsListResponse(skills=[_skill_to_response(skill) for skill in skills])
-        return SkillsListResponse(
-            skills=[
-                _skill_to_response(skill)
-                for skill in skills
-                if _is_admin_visible_skill(skill, visible_skill_names)
-            ]
-        )
+        visible_skill_names = await load_visible_custom_skill_names_for_request(request)
+        return SkillsListResponse(skills=[_skill_to_response(skill) for skill in filter_visible_skills(skills, visible_skill_names)])
     except Exception as e:
         logger.error(f"Failed to load skills: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to load skills: {str(e)}")
@@ -182,13 +147,8 @@ async def install_skill(request: SkillInstallRequest, config: AppConfig = Depend
 @router.get("/skills/custom", response_model=SkillsListResponse, summary="List Custom Skills")
 async def list_custom_skills(request: Request, config: AppConfig = Depends(get_config)) -> SkillsListResponse:
     try:
-        visible_skill_names = await _load_visible_skill_names_for_current_user(request)
-        skills = [
-            skill
-            for skill in get_or_new_skill_storage(app_config=config).load_skills(enabled_only=False)
-            if skill.category == SkillCategory.CUSTOM
-            and (visible_skill_names is None or _is_admin_visible_skill(skill, visible_skill_names))
-        ]
+        visible_skill_names = await load_visible_custom_skill_names_for_request(request)
+        skills = [skill for skill in get_or_new_skill_storage(app_config=config).load_skills(enabled_only=False) if skill.category == SkillCategory.CUSTOM and _is_admin_visible_skill(skill, visible_skill_names)]
         return SkillsListResponse(skills=[_skill_to_response(skill) for skill in skills])
     except Exception as e:
         logger.error("Failed to list custom skills: %s", e, exc_info=True)
@@ -357,8 +317,8 @@ async def get_skill(skill_name: str, request: Request, config: AppConfig = Depen
 
         if skill is None:
             raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
-        visible_skill_names = await _load_visible_skill_names_for_current_user(request)
-        if visible_skill_names is not None and not _is_admin_visible_skill(skill, visible_skill_names):
+        visible_skill_names = await load_visible_custom_skill_names_for_request(request)
+        if not _is_admin_visible_skill(skill, visible_skill_names):
             raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
 
         return _skill_to_response(skill)
@@ -383,8 +343,8 @@ async def update_skill(skill_name: str, request_body: SkillUpdateRequest, reques
 
         if skill is None:
             raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
-        visible_skill_names = await _load_visible_skill_names_for_current_user(request)
-        if visible_skill_names is not None and not _is_admin_visible_skill(skill, visible_skill_names):
+        visible_skill_names = await load_visible_custom_skill_names_for_request(request)
+        if not _is_admin_visible_skill(skill, visible_skill_names):
             raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
 
         config_path = ExtensionsConfig.resolve_config_path()
@@ -409,12 +369,7 @@ async def update_skill(skill_name: str, request_body: SkillUpdateRequest, reques
 
         skills = get_or_new_skill_storage(app_config=config).load_skills(enabled_only=False)
         updated_skill = next(
-            (
-                s
-                for s in skills
-                if s.name == skill_name
-                and (visible_skill_names is None or _is_admin_visible_skill(s, visible_skill_names))
-            ),
+            (s for s in skills if s.name == skill_name and _is_admin_visible_skill(s, visible_skill_names)),
             None,
         )
 
