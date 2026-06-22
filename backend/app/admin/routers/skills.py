@@ -326,11 +326,7 @@ async def update_skill(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the author or super admin can edit")
     was_approved = skill.status == SkillStatus.APPROVED
     old_name = skill.name
-    changed = (
-        (req.name is not None and req.name != skill.name)
-        or (req.description is not None and req.description != skill.description)
-        or (req.version is not None and req.version != skill.version)
-    )
+    changed = (req.name is not None and req.name != skill.name) or (req.description is not None and req.description != skill.description) or (req.version is not None and req.version != skill.version)
     updated = await skill_service.update_skill(db, skill, req.name, req.description, req.version)
     if was_approved and changed:
         _remove_skill_from_custom(old_name)
@@ -430,7 +426,6 @@ async def auto_review_skill(
     try:
         raw_result = DeerFlowClient(
             available_skills={req.review_skill_name},
-            username=user.username,
             plan_mode=False,
             thinking_enabled=True,
         ).chat(prompt, thread_id=f"skill-auto-review-{skill.id}")
