@@ -7,6 +7,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.admin.models.base import Base, TimestampMixin
 
 
+def _enum_values(enum_cls):
+    return [member.value for member in enum_cls]
+
+
 class TaskStatus(enum.StrEnum):
     ACTIVE = "active"
     PAUSED = "paused"
@@ -37,7 +41,7 @@ class ScheduledTask(Base, TimestampMixin):
     )
     is_enabled: Mapped[bool] = mapped_column(Boolean, server_default="true")
     status: Mapped[TaskStatus] = mapped_column(
-        Enum(TaskStatus),
+        Enum(TaskStatus, values_callable=_enum_values),
         server_default=TaskStatus.ACTIVE.value,
     )
     last_execution_at: Mapped[str | None] = mapped_column(String(50), nullable=True)
@@ -60,7 +64,7 @@ class TaskExecution(Base):
         nullable=False,
     )
     status: Mapped[ExecutionStatus] = mapped_column(
-        Enum(ExecutionStatus),
+        Enum(ExecutionStatus, values_callable=_enum_values),
         server_default=ExecutionStatus.RUNNING.value,
     )
     triggered_at: Mapped[str] = mapped_column(String(50), nullable=False)

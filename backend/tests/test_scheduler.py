@@ -2,7 +2,9 @@ from datetime import timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from sqlalchemy.dialects import postgresql
 
+from app.admin.models.scheduled_task import ExecutionStatus, ScheduledTask, TaskExecution, TaskStatus
 from app.gateway.routers.scheduler import TaskCreateRequest
 from deerflow.scheduler.manager import SchedulerManager
 from deerflow.scheduler.template_engine import render_template
@@ -81,6 +83,15 @@ def test_task_create_request_does_not_require_skill_name():
     )
 
     assert request.skill_name == ""
+
+
+def test_scheduler_status_enums_bind_database_values():
+    dialect = postgresql.dialect()
+    task_processor = ScheduledTask.__table__.c.status.type.bind_processor(dialect)
+    execution_processor = TaskExecution.__table__.c.status.type.bind_processor(dialect)
+
+    assert task_processor(TaskStatus.ACTIVE) == "active"
+    assert execution_processor(ExecutionStatus.RUNNING) == "running"
 
 
 class TestSchedulerManager:
