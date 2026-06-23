@@ -21,6 +21,12 @@ from langgraph_sdk import Auth
 from app.gateway.auth.errors import TokenError
 from app.gateway.auth.jwt import decode_token
 from app.gateway.deps import get_local_provider
+from app.gateway.internal_auth import (
+    INTERNAL_AUTH_HEADER_NAME,
+    INTERNAL_AUTH_USER_ID_HEADER_NAME,
+    get_internal_user,
+    is_valid_internal_auth_token,
+)
 
 auth = Auth()
 
@@ -62,6 +68,9 @@ async def authenticate(request):
       cookie → decode JWT → DB lookup → token_version match
     Also enforces CSRF on state-changing methods.
     """
+    if is_valid_internal_auth_token(request.headers.get(INTERNAL_AUTH_HEADER_NAME)):
+        return str(get_internal_user(request.headers.get(INTERNAL_AUTH_USER_ID_HEADER_NAME)).id)
+
     # CSRF check before authentication so forged cross-site requests
     # are rejected early, even if the cookie carries a valid JWT.
     _check_csrf(request)

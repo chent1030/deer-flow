@@ -135,9 +135,6 @@ class Paths:
         if self._base_dir is not None:
             return self._base_dir
 
-        if env_home := os.getenv("DEER_FLOW_HOME"):
-            return Path(env_home).resolve()
-
         return _default_local_base_dir()
 
     @property

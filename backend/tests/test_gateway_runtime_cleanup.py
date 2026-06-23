@@ -216,6 +216,23 @@ def test_windows_launcher_uses_repo_local_uv_cache():
     assert "New-Item -ItemType Directory -Force -Path $env:UV_CACHE_DIR" in windows_launcher
 
 
+def test_windows_launcher_sets_shared_internal_auth_token_for_backend_processes():
+    windows_launcher = _read("scripts/start-prod-windows.ps1")
+
+    assert "$env:DEER_FLOW_INTERNAL_AUTH_TOKEN" in windows_launcher
+    assert "[Guid]::NewGuid().ToString('N')" in windows_launcher
+    assert "DEER_FLOW_INTERNAL_AUTH_TOKEN" in windows_launcher
+
+
+def test_windows_launcher_sets_absolute_runtime_paths_for_backend_processes():
+    windows_launcher = _read("scripts/start-prod-windows.ps1")
+
+    assert "$env:DEER_FLOW_PROJECT_ROOT = $repoRoot" in windows_launcher
+    assert "$env:DEER_FLOW_HOME = Join-Path $repoRoot \"backend\\.deer-flow\"" in windows_launcher
+    assert "DEER_FLOW_PROJECT_ROOT='$escapedProjectRoot'" in windows_launcher
+    assert "DEER_FLOW_HOME='$escapedDeerFlowHome'" in windows_launcher
+
+
 def test_windows_launcher_rejects_stale_frontend_builds():
     windows_launcher = _read("scripts/start-prod-windows.ps1")
 

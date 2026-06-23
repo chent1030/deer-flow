@@ -1,6 +1,7 @@
 """Runtime path policy tests for standalone harness usage."""
 
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 import yaml
@@ -11,7 +12,7 @@ from deerflow.config import skills_config as skills_config_module
 from deerflow.config.app_config import AppConfig
 from deerflow.config.extensions_config import ExtensionsConfig
 from deerflow.config.paths import Paths
-from deerflow.config.runtime_paths import project_root
+from deerflow.config.runtime_paths import project_root, resolve_path
 from deerflow.config.skills_config import SkillsConfig
 from deerflow.skills.storage import get_or_new_skill_storage
 
@@ -64,6 +65,29 @@ def test_deer_flow_project_root_overrides_current_directory(tmp_path: Path, monk
     assert ExtensionsConfig.resolve_config_path() == project_root / "mcp_config.json"
     assert Paths().base_dir == project_root / ".deer-flow"
     assert SkillsConfig(path="custom-skills").get_skills_path() == project_root / "custom-skills"
+
+
+def test_deer_flow_home_avoids_cwd_for_user_agent_paths(tmp_path: Path, monkeypatch):
+    _clear_path_env(monkeypatch)
+    runtime_home = tmp_path / "runtime"
+    monkeypatch.setenv("DEER_FLOW_HOME", str(runtime_home))
+
+    with patch("os.getcwd", side_effect=AssertionError("cwd must not be used")):
+        assert Paths().user_agent_dir("user-1", "Assistant") == runtime_home / "users" / "user-1" / "agents" / "assistant"
+
+
+def test_resolve_path_avoids_cwd_for_absolute_paths(tmp_path: Path):
+    absolute_path = tmp_path / "skills"
+
+    with patch("os.getcwd", side_effect=AssertionError("cwd must not be used")):
+        assert resolve_path(absolute_path) == absolute_path
+
+
+def test_skill_storage_avoids_cwd_for_absolute_host_path(tmp_path: Path):
+    absolute_path = tmp_path / "skills"
+
+    with patch("os.getcwd", side_effect=AssertionError("cwd must not be used")):
+        assert get_or_new_skill_storage(skills_path=absolute_path).get_skills_root_path() == absolute_path
 
 
 def test_deer_flow_skills_path_overrides_project_default(tmp_path: Path, monkeypatch):

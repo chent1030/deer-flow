@@ -83,7 +83,7 @@ def test_apply_prompt_template_includes_custom_mounts(monkeypatch):
     monkeypatch.setattr(prompt_module, "get_deferred_tools_prompt_section", lambda **kwargs: "")
     monkeypatch.setattr(prompt_module, "_build_acp_section", lambda **kwargs: "")
     monkeypatch.setattr(prompt_module, "_get_memory_context", lambda agent_name=None, **kwargs: "")
-    monkeypatch.setattr(prompt_module, "get_agent_soul", lambda agent_name=None: "")
+    monkeypatch.setattr(prompt_module, "get_agent_soul", lambda agent_name=None, **kwargs: "")
 
     prompt = prompt_module.apply_prompt_template()
 
@@ -101,7 +101,7 @@ def test_apply_prompt_template_includes_relative_path_guidance(monkeypatch):
     monkeypatch.setattr(prompt_module, "get_deferred_tools_prompt_section", lambda **kwargs: "")
     monkeypatch.setattr(prompt_module, "_build_acp_section", lambda **kwargs: "")
     monkeypatch.setattr(prompt_module, "_get_memory_context", lambda agent_name=None, **kwargs: "")
-    monkeypatch.setattr(prompt_module, "get_agent_soul", lambda agent_name=None: "")
+    monkeypatch.setattr(prompt_module, "get_agent_soul", lambda agent_name=None, **kwargs: "")
 
     prompt = prompt_module.apply_prompt_template()
 
@@ -129,7 +129,7 @@ def test_apply_prompt_template_threads_explicit_app_config_without_global_config
     monkeypatch.setattr("deerflow.config.get_app_config", fail_get_app_config)
     monkeypatch.setattr("deerflow.config.memory_config.get_memory_config", fail_get_memory_config)
     monkeypatch.setattr(prompt_module, "get_or_new_skill_storage", lambda app_config=None: SimpleNamespace(load_skills=lambda enabled_only=True: []))
-    monkeypatch.setattr(prompt_module, "get_agent_soul", lambda agent_name=None: "")
+    monkeypatch.setattr(prompt_module, "get_agent_soul", lambda agent_name=None, **kwargs: "")
 
     prompt = prompt_module.apply_prompt_template(app_config=explicit_config)
 
@@ -168,7 +168,7 @@ def test_apply_prompt_template_threads_explicit_app_config_to_subagents_without_
     monkeypatch.setattr("deerflow.config.get_app_config", fail_get_app_config)
     monkeypatch.setattr("deerflow.config.subagents_config.get_subagents_app_config", fail_get_subagents_app_config)
     monkeypatch.setattr(prompt_module, "get_or_new_skill_storage", lambda app_config=None: SimpleNamespace(load_skills=lambda enabled_only=True: []))
-    monkeypatch.setattr(prompt_module, "get_agent_soul", lambda agent_name=None: "")
+    monkeypatch.setattr(prompt_module, "get_agent_soul", lambda agent_name=None, **kwargs: "")
 
     prompt = prompt_module.apply_prompt_template(subagent_enabled=True, app_config=explicit_config)
 
@@ -224,6 +224,56 @@ def test_get_memory_context_uses_explicit_app_config_without_global_config(monke
         "memory_data": {"facts": []},
         "max_tokens": 1234,
     }
+
+
+def test_get_memory_context_uses_explicit_user_id(monkeypatch):
+    explicit_config = SimpleNamespace(
+        memory=SimpleNamespace(enabled=True, injection_enabled=True, max_injection_tokens=1234),
+    )
+    captured: dict[str, object] = {}
+
+    def fake_get_memory_data(agent_name=None, *, user_id=None):
+        captured["agent_name"] = agent_name
+        captured["user_id"] = user_id
+        return {"facts": []}
+
+    monkeypatch.setattr("deerflow.runtime.user_context.get_effective_user_id", lambda: "default")
+    monkeypatch.setattr("deerflow.agents.memory.get_memory_data", fake_get_memory_data)
+    monkeypatch.setattr("deerflow.agents.memory.format_memory_for_injection", lambda memory_data, *, max_tokens: "remember this")
+
+    context = prompt_module._get_memory_context("sched-agent", app_config=explicit_config, user_id="user-123")
+
+    assert "<memory>" in context
+    assert captured == {"agent_name": "sched-agent", "user_id": "user-123"}
+
+
+def test_apply_prompt_template_loads_agent_soul_with_explicit_user_id(monkeypatch):
+    explicit_config = SimpleNamespace(
+        sandbox=SimpleNamespace(mounts=[]),
+        skills=SimpleNamespace(container_path="/mnt/skills"),
+        skill_evolution=SimpleNamespace(enabled=False),
+        tool_search=SimpleNamespace(enabled=False),
+        memory=SimpleNamespace(enabled=False, injection_enabled=False, max_injection_tokens=2000),
+        acp_agents={},
+    )
+    captured: dict[str, object] = {}
+
+    def fake_load_agent_soul(agent_name, *, user_id=None):
+        captured["agent_name"] = agent_name
+        captured["user_id"] = user_id
+        return "Scheduled task soul"
+
+    monkeypatch.setattr(prompt_module, "load_agent_soul", fake_load_agent_soul)
+    monkeypatch.setattr(prompt_module, "get_or_new_skill_storage", lambda app_config=None: SimpleNamespace(load_skills=lambda enabled_only=True: []))
+
+    prompt = prompt_module.apply_prompt_template(
+        agent_name="sched-agent",
+        app_config=explicit_config,
+        user_id="user-123",
+    )
+
+    assert "<soul>\nScheduled task soul\n</soul>" in prompt
+    assert captured == {"agent_name": "sched-agent", "user_id": "user-123"}
 
 
 def test_refresh_skills_system_prompt_cache_async_reloads_immediately(monkeypatch, tmp_path):

@@ -86,6 +86,30 @@ def test_memory_included_when_present():
     assert result["messages"][1].content == "Hi"
 
 
+def test_memory_context_receives_runtime_user_id():
+    mw = _make_middleware(user_id="user-123")
+    state = {"messages": [HumanMessage(content="Hi", id="msg-1")]}
+    captured: dict[str, object] = {}
+
+    def fake_get_memory_context(agent_name=None, **kwargs):
+        captured["agent_name"] = agent_name
+        captured.update(kwargs)
+        return "<memory>\nRuntime user memory.\n</memory>"
+
+    with (
+        mock.patch(
+            "deerflow.agents.lead_agent.prompt._get_memory_context",
+            side_effect=fake_get_memory_context,
+        ),
+        mock.patch("deerflow.agents.middlewares.dynamic_context_middleware.datetime") as mock_dt,
+    ):
+        mock_dt.now.return_value.strftime.return_value = "2026-05-08, Friday"
+        result = mw.before_agent(state, _fake_runtime())
+
+    assert "Runtime user memory." in result["messages"][0].content
+    assert captured["user_id"] == "user-123"
+
+
 # ---------------------------------------------------------------------------
 # Frozen-snapshot: no re-injection within a session
 # ---------------------------------------------------------------------------

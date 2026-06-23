@@ -156,8 +156,10 @@ async def test_task_executor_loads_scheduled_agent_by_user_id(monkeypatch):
 
     class FakeRuns:
         async def wait(self, **kwargs):
-            captured["config_user"] = kwargs["config"]["configurable"]["username"]
-            captured["config_skills"] = ",".join(kwargs["config"]["configurable"]["visible_skills"])
+            captured["has_config"] = "config" in kwargs
+            captured["context_username"] = kwargs["context"]["username"]
+            captured["context_user_id"] = kwargs["context"]["user_id"]
+            captured["context_skills"] = ",".join(kwargs["context"]["visible_skills"])
             return SimpleNamespace()
 
     class FakeClient:
@@ -166,7 +168,7 @@ async def test_task_executor_loads_scheduled_agent_by_user_id(monkeypatch):
 
     monkeypatch.setattr("deerflow.scheduler.executor.load_agent_config", fake_load_agent_config)
     monkeypatch.setattr("deerflow.scheduler.executor.list_visible_skills_for_user", fake_list_visible_skills)
-    monkeypatch.setattr("deerflow.scheduler.executor.get_client", lambda url: FakeClient())
+    monkeypatch.setattr("deerflow.scheduler.executor.get_client", lambda **kwargs: FakeClient())
 
     executor = TaskExecutor(session_factory)
     await executor.execute_task(task_id)
@@ -174,13 +176,94 @@ async def test_task_executor_loads_scheduled_agent_by_user_id(monkeypatch):
     assert captured["agent_name"] == "sched-test"
     assert captured["user_id"] == user_id
     assert captured["visible_user_id"] == user_id
-    assert captured["config_user"] == "schedule-user"
-    assert captured["config_skills"] == "visible-skill"
+    assert captured["has_config"] is False
+    assert captured["context_user_id"] == user_id
+    assert captured["context_username"] == "schedule-user"
+    assert captured["context_skills"] == "visible-skill"
 
     async with session_factory() as session:
         result = await session.execute(select(TaskExecution).where(TaskExecution.task_id == task.id))
         execution = result.scalar_one()
         assert execution.status == ExecutionStatus.COMPLETED
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_task_executor_creates_langgraph_client_with_internal_auth_headers(monkeypatch):
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with session_factory() as session:
+        user = User(
+            username="schedule-auth-user",
+            password_hash=hash_password("UserPass123!"),
+            display_name="Schedule Auth User",
+            email="schedule-auth@example.com",
+            role=UserRole.USER,
+            status=UserStatus.ACTIVE,
+        )
+        session.add(user)
+        await session.flush()
+        task = ScheduledTask(
+            user_id=user.id,
+            agent_name="sched-auth",
+            agent_description="auth header check",
+            agent_soul="Hello",
+            cron_expression="0 9 * * *",
+            custom_variables={},
+            status=TaskStatus.ACTIVE,
+        )
+        session.add(task)
+        await session.commit()
+        task_id = str(task.id)
+        user_id = str(user.id)
+
+    captured: dict[str, object] = {}
+
+    async def fake_list_visible_skills(db, requested_user_id, role, department_id):
+        return []
+
+    class FakeThreads:
+        async def create(self):
+            return {"thread_id": "thread-auth"}
+
+        async def get_state(self, thread_id):
+            return {"values": {"messages": []}}
+
+    class FakeRuns:
+        async def wait(self, **kwargs):
+            captured["run_kwargs"] = kwargs
+            return SimpleNamespace()
+
+    class FakeClient:
+        threads = FakeThreads()
+        runs = FakeRuns()
+
+    def fake_get_client(**kwargs):
+        captured.update(kwargs)
+        return FakeClient()
+
+    monkeypatch.setattr("deerflow.scheduler.executor.load_agent_config", lambda name, *, user_id=None: SimpleNamespace(model=None))
+    monkeypatch.setattr("deerflow.scheduler.executor.list_visible_skills_for_user", fake_list_visible_skills)
+    monkeypatch.setattr("deerflow.scheduler.executor.get_client", fake_get_client)
+
+    executor = TaskExecutor(session_factory)
+    await executor.execute_task(task_id)
+
+    headers = captured["headers"]
+    run_kwargs = captured["run_kwargs"]
+    assert captured["url"] == "http://127.0.0.1:2024"
+    assert headers["X-DeerFlow-Internal-Token"]
+    assert headers["X-DeerFlow-Internal-User-Id"] == user_id
+    assert headers["X-CSRF-Token"]
+    assert headers["Cookie"] == f"csrf_token={headers['X-CSRF-Token']}"
+    assert run_kwargs["assistant_id"] == "lead_agent"
+    assert "config" not in run_kwargs
+    assert run_kwargs["context"]["user_id"] == user_id
+    assert "timeout" not in run_kwargs
 
     await engine.dispose()
 
@@ -287,7 +370,7 @@ async def test_task_executor_falls_back_to_legacy_username_agent_dir(monkeypatch
 
     monkeypatch.setattr("deerflow.scheduler.executor.load_agent_config", fake_load_agent_config)
     monkeypatch.setattr("deerflow.scheduler.executor.list_visible_skills_for_user", fake_list_visible_skills)
-    monkeypatch.setattr("deerflow.scheduler.executor.get_client", lambda url: FakeClient())
+    monkeypatch.setattr("deerflow.scheduler.executor.get_client", lambda **kwargs: FakeClient())
 
     executor = TaskExecutor(session_factory)
     await executor.execute_task(task_id)

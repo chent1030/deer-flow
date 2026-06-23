@@ -214,6 +214,11 @@ $env:UV_CACHE_DIR = Join-Path $repoRoot ".uv-cache"
 $env:NEXT_TELEMETRY_DISABLED = "1"
 $env:PYTHONUTF8 = "1"
 $env:PYTHONIOENCODING = "utf-8"
+$env:DEER_FLOW_PROJECT_ROOT = $repoRoot
+$env:DEER_FLOW_HOME = Join-Path $repoRoot "backend\.deer-flow"
+if ([string]::IsNullOrWhiteSpace($env:DEER_FLOW_INTERNAL_AUTH_TOKEN)) {
+  $env:DEER_FLOW_INTERNAL_AUTH_TOKEN = [Guid]::NewGuid().ToString('N')
+}
 
 $logsDir = Join-Path $repoRoot "logs"
 New-Item -ItemType Directory -Force -Path $logsDir | Out-Null
@@ -279,11 +284,14 @@ $langgraphArgs = @(
 )
 $allowBlockingValue = if ($AllowBlocking) { "true" } else { "false" }
 $isolatedLoopsValue = if ($LangGraphIsolatedLoops) { "true" } else { "false" }
+$escapedProjectRoot = $env:DEER_FLOW_PROJECT_ROOT.Replace("'", "''")
+$escapedDeerFlowHome = $env:DEER_FLOW_HOME.Replace("'", "''")
 if ($AllowBlocking) {
   $langgraphArgs += "--allow-blocking"
 }
-$langgraphCmd = "`$env:NO_COLOR='1'; `$env:PYTHONUTF8='1'; `$env:PYTHONIOENCODING='utf-8'; `$env:PYTHONPATH='.'; `$env:LANGGRAPH_ALLOW_BLOCKING='$allowBlockingValue'; `$env:BG_JOB_ISOLATED_LOOPS='$isolatedLoopsValue'; " + ($langgraphArgs -join " ")
-$gatewayCmd = "`$env:PYTHONUTF8='1'; `$env:PYTHONIOENCODING='utf-8'; `$env:PYTHONPATH='.'; uv run python -X utf8 start_gateway.py"
+$backendEnvCmd = "`$env:DEER_FLOW_PROJECT_ROOT='$escapedProjectRoot'; `$env:DEER_FLOW_HOME='$escapedDeerFlowHome'; `$env:PYTHONUTF8='1'; `$env:PYTHONIOENCODING='utf-8'; `$env:PYTHONPATH='.'; "
+$langgraphCmd = "`$env:NO_COLOR='1'; " + $backendEnvCmd + "`$env:LANGGRAPH_ALLOW_BLOCKING='$allowBlockingValue'; `$env:BG_JOB_ISOLATED_LOOPS='$isolatedLoopsValue'; " + ($langgraphArgs -join " ")
+$gatewayCmd = $backendEnvCmd + "uv run python -X utf8 start_gateway.py"
 $frontendCmd = "pnpm start"
 $adminCmd = "pnpm preview --host 0.0.0.0 --port 3002"
 $nginxConf = Join-Path $repoRoot "docker\nginx\nginx.local.conf"

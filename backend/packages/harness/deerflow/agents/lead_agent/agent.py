@@ -21,6 +21,7 @@ middleware, and the async path inside ``TitleMiddleware``. Any new in-graph
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import AgentMiddleware
@@ -51,6 +52,17 @@ from deerflow.tracing import build_tracing_callbacks
 logger = logging.getLogger(__name__)
 
 _BOOTSTRAP_SKILL_NAMES = {"bootstrap"}
+_SKILL_POLICY_CACHE_MISS = Skill(
+    name="__skill_policy_cache_miss__",
+    description="Runtime skill cache was not ready; deny tool execution until it warms.",
+    license="internal",
+    skill_dir=Path("."),
+    skill_file=Path("SKILL.md"),
+    relative_path=Path("."),
+    category="internal",
+    allowed_tools=[],
+    enabled=True,
+)
 
 
 def _get_runtime_config(config: RunnableConfig) -> dict:
@@ -304,7 +316,10 @@ def build_middlewares(
     # first HumanMessage to keep the system prompt fully static for prefix-cache reuse.
     from deerflow.agents.middlewares.dynamic_context_middleware import DynamicContextMiddleware
 
-    middlewares.append(DynamicContextMiddleware(agent_name=agent_name, app_config=resolved_app_config))
+    cfg = _get_runtime_config(config)
+    runtime_user_id = str(cfg["user_id"]) if cfg.get("user_id") else None
+
+    middlewares.append(DynamicContextMiddleware(agent_name=agent_name, app_config=resolved_app_config, user_id=runtime_user_id))
 
     # Deterministically load a full SKILL.md when the user starts the turn with
     # /skill-name. This keeps the base system prompt metadata-only while giving
@@ -319,7 +334,6 @@ def build_middlewares(
         middlewares.append(summarization_middleware)
 
     # Add TodoList middleware if plan mode is enabled
-    cfg = _get_runtime_config(config)
     is_plan_mode = cfg.get("is_plan_mode", False)
     todo_list_middleware = _create_todo_list_middleware(is_plan_mode)
     if todo_list_middleware is not None:
@@ -403,14 +417,20 @@ def _resolve_available_skills(agent_config, is_bootstrap: bool, visible_skills: 
     return agent_skills & user_visible
 
 
-def _load_enabled_skills_for_tool_policy(available_skills: set[str] | None, *, app_config: AppConfig) -> list[Skill]:
+def _load_enabled_skills_for_tool_policy(available_skills: set[str] | None, *, app_config: AppConfig, use_cached_skills: bool = False) -> list[Skill]:
     try:
-        from deerflow.agents.lead_agent.prompt import get_enabled_skills_for_config
+        from deerflow.agents.lead_agent.prompt import get_enabled_skills_for_config, get_runtime_enabled_skills
 
-        skills = get_enabled_skills_for_config(app_config)
+        skills = get_runtime_enabled_skills(app_config) if use_cached_skills else get_enabled_skills_for_config(app_config)
     except Exception:
         logger.exception("Failed to load skills for allowed-tools policy")
         raise
+
+    if use_cached_skills and available_skills:
+        loaded_names = {skill.name for skill in skills}
+        if not loaded_names.intersection(available_skills):
+            logger.warning("Enabled skills cache is cold for available skills %s; denying tools until cache warms", sorted(available_skills))
+            return [_SKILL_POLICY_CACHE_MISS]
 
     if available_skills is None:
         return skills
@@ -432,6 +452,7 @@ def _make_lead_agent(config: RunnableConfig, *, app_config: AppConfig):
 
     cfg = _get_runtime_config(config)
     resolved_app_config = app_config
+    runtime_user_id = str(cfg["user_id"]) if cfg.get("user_id") else None
 
     thinking_enabled = cfg.get("thinking_enabled", True)
     reasoning_effort = cfg.get("reasoning_effort", None)
@@ -442,7 +463,7 @@ def _make_lead_agent(config: RunnableConfig, *, app_config: AppConfig):
     is_bootstrap = cfg.get("is_bootstrap", False)
     agent_name = validate_agent_name(cfg.get("agent_name"))
 
-    agent_config = load_agent_config(agent_name) if not is_bootstrap else None
+    agent_config = load_agent_config(agent_name, user_id=runtime_user_id) if not is_bootstrap else None
     available_skills = _resolve_available_skills(agent_config, is_bootstrap, cfg.get("visible_skills"))
     # Custom agent model from agent config (if any), or None to let _resolve_model_name pick the default
     agent_model_name = agent_config.model if agent_config and agent_config.model else None
@@ -483,6 +504,7 @@ def _make_lead_agent(config: RunnableConfig, *, app_config: AppConfig):
             "subagent_enabled": subagent_enabled,
             "tool_groups": agent_config.tool_groups if agent_config else None,
             "available_skills": sorted(available_skills) if available_skills is not None else None,
+            "user_id": runtime_user_id,
         }
     )
 
@@ -499,7 +521,7 @@ def _make_lead_agent(config: RunnableConfig, *, app_config: AppConfig):
             existing = list(existing)
         config["callbacks"] = [*existing, *tracing_callbacks]
 
-    skills_for_tool_policy = _load_enabled_skills_for_tool_policy(available_skills, app_config=resolved_app_config)
+    skills_for_tool_policy = _load_enabled_skills_for_tool_policy(available_skills, app_config=resolved_app_config, use_cached_skills=True)
 
     if is_bootstrap:
         # Special bootstrap agent with minimal prompt for initial custom agent creation flow
@@ -523,7 +545,9 @@ def _make_lead_agent(config: RunnableConfig, *, app_config: AppConfig):
                 max_concurrent_subagents=max_concurrent_subagents,
                 available_skills=set(_BOOTSTRAP_SKILL_NAMES),
                 app_config=resolved_app_config,
+                user_id=runtime_user_id,
                 deferred_names=setup.deferred_names,
+                use_cached_skills=True,
             ),
             state_schema=ThreadState,
         )
@@ -552,7 +576,9 @@ def _make_lead_agent(config: RunnableConfig, *, app_config: AppConfig):
             agent_name=agent_name,
             available_skills=available_skills,
             app_config=resolved_app_config,
+            user_id=runtime_user_id,
             deferred_names=setup.deferred_names,
+            use_cached_skills=True,
         ),
         state_schema=ThreadState,
     )

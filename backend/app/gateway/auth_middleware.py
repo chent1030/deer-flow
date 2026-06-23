@@ -18,7 +18,12 @@ from starlette.types import ASGIApp
 
 from app.gateway.auth.errors import AuthErrorCode, AuthErrorResponse
 from app.gateway.authz import _ALL_PERMISSIONS, AuthContext
-from app.gateway.internal_auth import INTERNAL_AUTH_HEADER_NAME, get_internal_user, is_valid_internal_auth_token
+from app.gateway.internal_auth import (
+    INTERNAL_AUTH_HEADER_NAME,
+    INTERNAL_AUTH_USER_ID_HEADER_NAME,
+    get_internal_user,
+    is_valid_internal_auth_token,
+)
 from deerflow.runtime.user_context import reset_current_user, set_current_user
 
 # Paths that never require authentication.
@@ -79,7 +84,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         internal_user = None
         if is_valid_internal_auth_token(request.headers.get(INTERNAL_AUTH_HEADER_NAME)):
-            internal_user = get_internal_user()
+            internal_user = get_internal_user(request.headers.get(INTERNAL_AUTH_USER_ID_HEADER_NAME))
 
         # Non-public path: require session cookie
         if internal_user is None and not request.cookies.get("access_token"):

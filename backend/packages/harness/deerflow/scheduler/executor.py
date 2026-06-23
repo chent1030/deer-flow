@@ -8,6 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.admin.models.scheduled_task import ExecutionStatus, ScheduledTask, TaskExecution
 from app.admin.services.skill_service import list_visible_skills_for_user
+from app.gateway.csrf_middleware import CSRF_COOKIE_NAME, CSRF_HEADER_NAME, generate_csrf_token
+from app.gateway.internal_auth import create_internal_auth_headers
 from deerflow.config.agents_config import load_agent_config
 from deerflow.scheduler.template_engine import render_template
 
@@ -15,7 +17,6 @@ logger = logging.getLogger(__name__)
 
 UTC8 = timezone(timedelta(hours=8))
 DEFAULT_LANGGRAPH_URL = "http://127.0.0.1:2024"
-EXECUTION_TIMEOUT = 600
 
 
 def _now_iso() -> str:
@@ -40,6 +41,14 @@ class TaskExecutor:
     ) -> None:
         self._session_factory = session_factory
         self._langgraph_url = langgraph_url
+        self._csrf_token = generate_csrf_token()
+
+    def _client_headers(self, user_id: str) -> dict[str, str]:
+        return {
+            **create_internal_auth_headers(user_id=user_id),
+            CSRF_HEADER_NAME: self._csrf_token,
+            "Cookie": f"{CSRF_COOKIE_NAME}={self._csrf_token}",
+        }
 
     async def execute_task(self, task_id_str: str) -> None:
         task_id = uuid.UUID(task_id_str)
@@ -99,26 +108,27 @@ class TaskExecutor:
             )
             agent_model = agent_cfg.model if agent_cfg else None
 
-            client = get_client(url=self._langgraph_url)
+            client = get_client(
+                url=self._langgraph_url,
+                headers=self._client_headers(str(task.user_id)),
+            )
             thread = await client.threads.create()
             thread_id = thread["thread_id"]
 
-            config: dict = {
-                "configurable": {
-                    "agent_name": task.agent_name,
-                    "username": user_name,
-                    "visible_skills": visible_skills,
-                },
+            context = {
+                "agent_name": task.agent_name,
+                "user_id": str(task.user_id),
+                "username": user_name,
+                "visible_skills": visible_skills,
             }
             if agent_model:
-                config["configurable"]["model"] = agent_model
+                context["model"] = agent_model
 
             run = await client.runs.wait(
                 thread_id=thread_id,
-                assistant_id="lead-agent",
+                assistant_id="lead_agent",
                 input={"messages": [{"role": "user", "content": rendered_prompt}]},
-                config=config,
-                timeout=EXECUTION_TIMEOUT,
+                context=context,
             )
 
             state = await client.threads.get_state(thread_id)

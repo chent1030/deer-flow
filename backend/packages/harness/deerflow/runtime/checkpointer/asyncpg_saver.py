@@ -51,7 +51,11 @@ class AsyncPGSaver(AsyncPostgresSaver):
         pipeline: bool = False,
         serde=None,
     ) -> AsyncIterator[AsyncPGSaver]:
-        pool = await asyncpg.create_pool(conn_string, min_size=2, max_size=10)
+        token = _skip_blockbuster()
+        try:
+            pool = await asyncpg.create_pool(conn_string, min_size=2, max_size=10)
+        finally:
+            _reset_blockbuster(token)
         try:
             yield cls(pool=pool, serde=serde)
         finally:

@@ -56,14 +56,14 @@ def test_no_cookie_raises_401():
     with pytest.raises(Auth.exceptions.HTTPException) as exc:
         asyncio.run(authenticate(_req()))
     assert exc.value.status_code == 401
-    assert "Not authenticated" in str(exc.value.detail)
+    assert "请先登录" in str(exc.value.detail)
 
 
 def test_invalid_jwt_raises_401():
     with pytest.raises(Auth.exceptions.HTTPException) as exc:
         asyncio.run(authenticate(_req({"access_token": "garbage"})))
     assert exc.value.status_code == 401
-    assert "Invalid token" in str(exc.value.detail)
+    assert "登录状态无效" in str(exc.value.detail)
 
 
 def test_expired_jwt_raises_401():
@@ -79,7 +79,7 @@ def test_user_not_found_raises_401():
         with pytest.raises(Auth.exceptions.HTTPException) as exc:
             asyncio.run(authenticate(_req({"access_token": token})))
         assert exc.value.status_code == 401
-        assert "User not found" in str(exc.value.detail)
+        assert "用户不存在" in str(exc.value.detail)
 
 
 def test_token_version_mismatch_raises_401():
@@ -89,7 +89,7 @@ def test_token_version_mismatch_raises_401():
         with pytest.raises(Auth.exceptions.HTTPException) as exc:
             asyncio.run(authenticate(_req({"access_token": token})))
         assert exc.value.status_code == 401
-        assert "revoked" in str(exc.value.detail).lower()
+        assert "失效" in str(exc.value.detail)
 
 
 def test_valid_token_returns_user_id():
@@ -254,7 +254,22 @@ def test_csrf_get_no_check():
         asyncio.run(authenticate(_req(method="GET")))
     # Rejected by missing cookie, NOT by CSRF
     assert exc.value.status_code == 401
-    assert "Not authenticated" in str(exc.value.detail)
+    assert "请先登录" in str(exc.value.detail)
+
+
+def test_internal_auth_header_bypasses_cookie_and_csrf():
+    from app.gateway.internal_auth import create_internal_auth_headers
+
+    result = asyncio.run(
+        authenticate(
+            _req(
+                method="POST",
+                headers=create_internal_auth_headers(user_id="scheduler-user"),
+            )
+        )
+    )
+
+    assert result == "scheduler-user"
 
 
 def test_csrf_post_missing_token():
@@ -262,7 +277,7 @@ def test_csrf_post_missing_token():
     with pytest.raises(Auth.exceptions.HTTPException) as exc:
         asyncio.run(authenticate(_req(method="POST", cookies={"access_token": "some-jwt"})))
     assert exc.value.status_code == 403
-    assert "CSRF token missing" in str(exc.value.detail)
+    assert "缺少 CSRF" in str(exc.value.detail)
 
 
 def test_csrf_post_mismatched_token():
@@ -275,10 +290,10 @@ def test_csrf_post_mismatched_token():
                     cookies={"access_token": "some-jwt", "csrf_token": "real-token"},
                     headers={"x-csrf-token": "wrong-token"},
                 )
-            )
         )
+    )
     assert exc.value.status_code == 403
-    assert "mismatch" in str(exc.value.detail)
+    assert "不匹配" in str(exc.value.detail)
 
 
 def test_csrf_post_matching_token_proceeds_to_jwt():
@@ -292,10 +307,10 @@ def test_csrf_post_matching_token_proceeds_to_jwt():
                     headers={"x-csrf-token": "same-token"},
                 )
             )
-        )
+    )
     # Past CSRF, rejected by JWT decode
     assert exc.value.status_code == 401
-    assert "Invalid token" in str(exc.value.detail)
+    assert "登录状态无效" in str(exc.value.detail)
 
 
 def test_csrf_put_requires_token():

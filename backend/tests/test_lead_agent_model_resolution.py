@@ -118,6 +118,33 @@ def test_internal_make_lead_agent_uses_explicit_app_config(monkeypatch):
     assert result["model"] is not None
 
 
+def test_make_lead_agent_loads_custom_agent_with_runtime_user_id(monkeypatch):
+    app_config = _make_app_config([_make_model("safe-model", supports_thinking=False)])
+
+    import deerflow.tools as tools_module
+
+    captured: dict[str, object] = {}
+
+    def _fake_load_agent_config(agent_name, *, user_id=None):
+        captured["agent_name"] = agent_name
+        captured["user_id"] = user_id
+        return MagicMock(model=None, skills=[], tool_groups=None)
+
+    monkeypatch.setattr(lead_agent_module, "load_agent_config", _fake_load_agent_config)
+    monkeypatch.setattr(tools_module, "get_available_tools", lambda **kwargs: [])
+    monkeypatch.setattr(lead_agent_module, "build_middlewares", lambda config, model_name, agent_name=None, **kwargs: [])
+    monkeypatch.setattr(lead_agent_module, "create_chat_model", lambda **kwargs: object())
+    monkeypatch.setattr(lead_agent_module, "create_agent", lambda **kwargs: kwargs)
+    monkeypatch.setattr(lead_agent_module, "build_tracing_callbacks", lambda: [])
+
+    lead_agent_module._make_lead_agent(
+        {"configurable": {"agent_name": "sched-agent", "user_id": "user-123"}},
+        app_config=app_config,
+    )
+
+    assert captured == {"agent_name": "sched-agent", "user_id": "user-123"}
+
+
 def test_make_lead_agent_uses_runtime_app_config_from_context_without_global_read(monkeypatch):
     app_config = _make_app_config([_make_model("context-model", supports_thinking=False)])
 
@@ -336,11 +363,9 @@ def test_build_middlewares_uses_resolved_model_name_for_vision(monkeypatch):
     )
 
     assert any(isinstance(m, lead_agent_module.ViewImageMiddleware) for m in middlewares)
-    # verify the custom middleware is injected correctly.
-    # Chain tail order after the custom middleware is:
-    #   ..., custom, SafetyFinishReasonMiddleware, ClarificationMiddleware
-    # so the custom mock sits at index [-3].
-    assert len(middlewares) > 0 and isinstance(middlewares[-3], MagicMock)
+    custom_index = next(i for i, middleware in enumerate(middlewares) if isinstance(middleware, MagicMock))
+    clarification_index = next(i for i, middleware in enumerate(middlewares) if isinstance(middleware, lead_agent_module.ClarificationMiddleware))
+    assert custom_index < clarification_index
 
 
 def test_build_middlewares_passes_explicit_app_config_to_shared_factory(monkeypatch):
@@ -530,3 +555,32 @@ def test_memory_middleware_uses_explicit_memory_config_without_global_read(monke
     middleware = MemoryMiddleware(memory_config=MemoryConfig(enabled=False))
 
     assert middleware.after_agent({"messages": []}, runtime=MagicMock(context={"thread_id": "thread-1"})) is None
+
+
+def test_memory_middleware_queues_with_runtime_user_id(monkeypatch):
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    from deerflow.agents.middlewares import memory_middleware as memory_middleware_module
+    from deerflow.agents.middlewares.memory_middleware import MemoryMiddleware
+
+    captured: dict[str, object] = {}
+    fake_queue = MagicMock()
+    fake_queue.add.side_effect = lambda **kwargs: captured.update(kwargs)
+
+    monkeypatch.setattr(memory_middleware_module, "get_memory_queue", lambda: fake_queue)
+    monkeypatch.setattr(memory_middleware_module, "detect_correction", lambda messages: False)
+    monkeypatch.setattr(memory_middleware_module, "detect_reinforcement", lambda messages: False)
+    monkeypatch.setattr(memory_middleware_module, "filter_messages_for_memory", lambda messages: list(messages))
+
+    middleware = MemoryMiddleware(agent_name="sched-agent", memory_config=MemoryConfig(enabled=True))
+    runtime = MagicMock(context={"thread_id": "thread-1", "user_id": "user-123"})
+
+    result = middleware.after_agent(
+        {"messages": [HumanMessage(content="hello"), AIMessage(content="done")]},
+        runtime=runtime,
+    )
+
+    assert result is None
+    assert captured["thread_id"] == "thread-1"
+    assert captured["agent_name"] == "sched-agent"
+    assert captured["user_id"] == "user-123"
