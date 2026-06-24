@@ -17,12 +17,13 @@ from app.admin.deps import get_db
 from app.admin.models import Base
 from app.admin.models.department import Department
 from app.admin.models.user import User, UserRole, UserStatus
-from app.admin.routers import audit_threads as admin_audit_threads
 from app.admin.routers import agent_share_records as admin_agent_share_records
+from app.admin.routers import audit_threads as admin_audit_threads
 from app.admin.routers import auth as admin_auth
 from app.admin.routers import departments as admin_depts
 from app.admin.routers import skills as admin_skills
 from app.admin.routers import users as admin_users
+from deerflow.persistence.base import Base as RuntimeBase
 
 TEST_JWT_CONFIG = JwtConfig(
     secret_key="test-secret-key",
@@ -48,8 +49,10 @@ async def engine():
     eng = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with eng.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(RuntimeBase.metadata.create_all)
     yield eng
     async with eng.begin() as conn:
+        await conn.run_sync(RuntimeBase.metadata.drop_all)
         await conn.run_sync(Base.metadata.drop_all)
     await eng.dispose()
 

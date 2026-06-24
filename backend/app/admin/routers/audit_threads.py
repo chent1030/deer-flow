@@ -1,14 +1,11 @@
 import logging
-import uuid
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.admin.deps import get_db, require_role
 from app.admin.models.base import now_utc8
-from app.admin.models.thread import Thread, ThreadMessage
 from app.admin.models.user import User, UserRole
 from app.admin.schemas.thread import (
     DailyMessageStatsPoint,
@@ -59,50 +56,24 @@ async def list_audit_threads(
     db: AsyncSession = Depends(get_db),
 ):
     offset = (page - 1) * page_size
-    q = select(Thread).where(Thread.status != "deleted")
-    count_q = select(func.count()).select_from(Thread).where(Thread.status != "deleted")
-
-    if user_id:
-        uid = uuid.UUID(user_id)
-        q = q.where(Thread.user_id == uid)
-        count_q = count_q.where(Thread.user_id == uid)
-
+    start = end = None
     if start_date or end_date:
         start, end = _parse_date_range(start_date, end_date)
-        q = q.where(Thread.created_at >= start, Thread.created_at <= end)
-        count_q = count_q.where(Thread.created_at >= start, Thread.created_at <= end)
 
-    if search:
-        q = q.where(Thread.title.ilike(f"%{search}%"))
-        count_q = count_q.where(Thread.title.ilike(f"%{search}%"))
+    records, total = await thread_service.list_audit_threads(
+        db,
+        offset=offset,
+        limit=page_size,
+        user_id=user_id,
+        start_date=start,
+        end_date=end,
+        search=search,
+    )
 
-    q = q.order_by(Thread.updated_at.desc()).offset(offset).limit(page_size)
-
-    result = await db.execute(q)
-    threads = list(result.scalars().all())
-
-    count_result = await db.execute(count_q)
-    total = count_result.scalar() or 0
-
-    items = []
-    for t in threads:
-        username = t.user.username if t.user else None
-        display_name = t.user.display_name if t.user else None
-        items.append(
-            ThreadAuditResponse(
-                id=t.id,
-                user_id=str(t.user_id),
-                title=t.title,
-                status=t.status,
-                message_count=t.message_count,
-                created_at=t.created_at,
-                updated_at=t.updated_at,
-                username=username,
-                display_name=display_name,
-            )
-        )
-
-    return ThreadAuditListResponse(items=items, total=total)
+    return ThreadAuditListResponse(
+        items=[ThreadAuditResponse.model_validate(record) for record in records],
+        total=total,
+    )
 
 
 @router.get("/stats", response_model=ThreadStatsResponse)
@@ -143,16 +114,11 @@ async def get_audit_thread_messages(
     user: User = Depends(require_role(UserRole.SUPER_ADMIN)),
     db: AsyncSession = Depends(get_db),
 ):
-    thread = await thread_service.get_thread(db, thread_id)
-    if not thread:
+    if not await thread_service.audit_thread_exists(db, thread_id):
         raise HTTPException(status_code=404, detail="Thread not found")
 
     offset = (page - 1) * page_size
-    messages = await thread_service.get_thread_messages(db, thread_id, offset=offset, limit=page_size)
-
-    count_q = select(func.count()).select_from(ThreadMessage).where(ThreadMessage.thread_id == thread_id)
-    count_result = await db.execute(count_q)
-    total = count_result.scalar() or 0
+    messages, total = await thread_service.get_audit_thread_messages(db, thread_id, offset=offset, limit=page_size)
 
     return ThreadMessageListResponse(
         items=[ThreadMessageResponse.model_validate(m) for m in messages],
