@@ -10,7 +10,7 @@ import pytest
 from sqlalchemy.exc import DatabaseError as SQLAlchemyDatabaseError
 
 from deerflow.runtime import DisconnectMode, RunManager, RunStatus
-from deerflow.runtime.runs.manager import ConflictError, PersistenceRetryPolicy
+from deerflow.runtime.runs.manager import CancelOutcome, ConflictError, PersistenceRetryPolicy
 from deerflow.runtime.runs.store.memory import MemoryRunStore
 
 ISO_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}")
@@ -29,19 +29,19 @@ class FlakyStatusRunStore(MemoryRunStore):
         self.status_failures = status_failures
         self.status_update_attempts = 0
 
-    async def update_status(self, run_id, status, *, error=None):
+    async def update_status(self, run_id, status, *, error=None, stop_reason=None):
         self.status_update_attempts += 1
         if self.status_failures > 0:
             self.status_failures -= 1
             raise sqlite3.OperationalError("database is locked")
-        return await super().update_status(run_id, status, error=error)
+        return await super().update_status(run_id, status, error=error, stop_reason=stop_reason)
 
 
 class MissingRowStatusRunStore(MemoryRunStore):
     """Memory run store that reports a missing row for status updates."""
 
-    async def update_status(self, run_id, status, *, error=None):
-        await super().update_status(run_id, status, error=error)
+    async def update_status(self, run_id, status, *, error=None, stop_reason=None):
+        await super().update_status(run_id, status, error=error, stop_reason=stop_reason)
         return False
 
 
@@ -52,7 +52,7 @@ class PermanentStatusRunStore(MemoryRunStore):
         super().__init__()
         self.status_update_attempts = 0
 
-    async def update_status(self, run_id, status, *, error=None):
+    async def update_status(self, run_id, status, *, error=None, stop_reason=None):
         self.status_update_attempts += 1
         raise SQLAlchemyDatabaseError(
             "UPDATE runs SET status = :status WHERE run_id = :run_id",
@@ -61,15 +61,15 @@ class PermanentStatusRunStore(MemoryRunStore):
         )
 
 
-class FailingStatusRunStore(MemoryRunStore):
-    """Memory run store that always fails status updates."""
+class FailingTakeoverRunStore(MemoryRunStore):
+    """Memory run store that always fails takeover claims."""
 
     def __init__(self) -> None:
         super().__init__()
-        self.status_update_attempts = 0
+        self.takeover_attempts = 0
 
-    async def update_status(self, run_id, status, *, error=None):
-        self.status_update_attempts += 1
+    async def claim_for_takeover(self, run_id, *, grace_seconds, error):
+        self.takeover_attempts += 1
         raise sqlite3.OperationalError("database is locked")
 
 
@@ -151,7 +151,7 @@ async def test_cancel(manager: RunManager):
     await manager.set_status(record.run_id, RunStatus.running)
 
     cancelled = await manager.cancel(record.run_id)
-    assert cancelled is True
+    assert cancelled == CancelOutcome.cancelled
     assert record.abort_event.is_set()
     assert record.status == RunStatus.interrupted
 
@@ -167,7 +167,7 @@ async def test_cancel_persists_interrupted_status_to_store():
     cancelled = await manager.cancel(record.run_id)
 
     stored = await store.get(record.run_id)
-    assert cancelled is True
+    assert cancelled == CancelOutcome.cancelled
     assert stored is not None
     assert stored["status"] == "interrupted"
 
@@ -301,9 +301,9 @@ async def test_reconcile_orphaned_inflight_runs_skips_live_local_run():
 
 
 @pytest.mark.anyio
-async def test_reconcile_orphaned_inflight_runs_skips_rows_when_error_status_is_not_persisted():
-    """Startup recovery must not report a row as recovered if the error update failed."""
-    store = FailingStatusRunStore()
+async def test_reconcile_orphaned_inflight_runs_skips_rows_when_takeover_claim_fails():
+    """Startup recovery must not report a row as recovered if the takeover claim failed."""
+    store = FailingTakeoverRunStore()
     await store.put("running-run", thread_id="thread-1", status="running", created_at="2026-01-01T00:00:00+00:00")
     manager = RunManager(
         store=store,
@@ -318,17 +318,17 @@ async def test_reconcile_orphaned_inflight_runs_skips_rows_when_error_status_is_
     stored = await store.get("running-run")
     assert recovered == []
     assert stored["status"] == "running"
-    assert store.status_update_attempts == 2
+    assert store.takeover_attempts == 2
 
 
 @pytest.mark.anyio
 async def test_cancel_not_inflight(manager: RunManager):
-    """Cancelling a completed run should return False."""
+    """Cancelling a completed run should return not_cancellable."""
     record = await manager.create("thread-1")
     await manager.set_status(record.run_id, RunStatus.success)
 
     cancelled = await manager.cancel(record.run_id)
-    assert cancelled is False
+    assert cancelled == CancelOutcome.not_cancellable
 
 
 @pytest.mark.anyio
